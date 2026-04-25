@@ -426,7 +426,7 @@ def build_panel(img, pd_, ed_, is_good, conf):
               font=F14,fill=(tg_[0],tg_[1],tg_[2]))
 
     bx,by = px+22,py+90
-    bw_ = max(0, INNER - (ccx - px) - cr - 40)
+    bw_   = max(10, INNER - (ccx - px) - cr*2 - 40)
     c2_   = C['card']
     draw.rounded_rectangle([(bx,by),(bx+bw_,by+9)],radius=4,fill=(c2_[0],c2_[1],c2_[2]))
     fw = int(bw_*score/100)
