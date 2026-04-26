@@ -9,17 +9,17 @@ from PIL import ImageFont, ImageDraw, Image
 import datetime
 import math
 
-sys.path.append(r"E:\python\Fit_me_up\MediaPipe\code")
+sys.path.append(r"C:\python\Fit_me_up\MediaPipe\code")
 from predict import predict_posture
 
 warnings.filterwarnings('ignore')
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
 # ── 경로 ──────────────────────────────────────────────────
-YOLO_MODEL    = r"E:\python\Fit_me_up\YOLO\fit_me_up\combined\weights\best.pt"
-IMAGE_PATH    = r"E:\python\Fit_me_up\test (3).jpg"
-MODEL_PATH_MP = r"E:\python\Fit_me_up\MediaPipe\models\pose_landmarker.task"
-LOGO_PATH     = r"E:\python\Fit_me_up\logo.png"
+YOLO_MODEL    = r"C:\python\Fit_me_up\YOLO\fit_me_up\combined\weights\best.pt"
+IMAGE_PATH    = r"C:\python\Fit_me_up\test (3).jpg"
+MODEL_PATH_MP = r"C:\python\Fit_me_up\MediaPipe\models\pose_landmarker.task"
+LOGO_PATH     = r"C:\python\Fit_me_up\logo.png"
 
 # ── 출력 해상도 ────────────────────────────────────────────
 TW, TH = 2560, 1440
@@ -27,8 +27,8 @@ IW     = 1200   # 이미지 영역
 PW     = TW-IW  # 패널 영역 1360px
 
 # ── 폰트 ──────────────────────────────────────────────────
-FP  = r"E:\python\Fit_me_up\Fonts\malgunbd.ttf"
-FPR = r"E:\python\Fit_me_up\Fonts\malgun.ttf"
+FP  = r"C:\python\Fit_me_up\Fonts\malgunbd.ttf"
+FPR = r"C:\python\Fit_me_up\Fonts\malgun.ttf"
 F10 = ImageFont.truetype(FPR, 13)
 F12 = ImageFont.truetype(FPR, 15)
 F14 = ImageFont.truetype(FPR, 17)
