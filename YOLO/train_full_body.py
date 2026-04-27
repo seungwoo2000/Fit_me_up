@@ -7,11 +7,11 @@ def main():
     start = time.time()
 
     # ── 경로 ──────────────────────────────────────────────────
-    yaml_path   = r"E:\python\FIT_ME_UP\YOLO\data_full_body.yaml"
-    test_source = r"E:\python\FIT_ME_UP\YOLO\YOLO_full_body_Labeling\split_data\test\images"
+    yaml_path   = r"C:\python\FIT_ME_UP\YOLO\data_full_body.yaml"
+    test_source = r"C:\python\FIT_ME_UP\YOLO\YOLO_full_body_Labeling\split_data\test\images"
 
     # ── 모델 로드 ──────────────────────────────────────────────
-    model = YOLO(r'E:\python\FIT_ME_UP\YOLO\yolov8n.pt')
+    model = YOLO(r'C:\python\FIT_ME_UP\YOLO\yolov8n.pt')
 
     # ── 하이퍼파라미터 ─────────────────────────────────────────
     params = {
@@ -26,7 +26,7 @@ def main():
         'weight_decay': 0.0005,    # 과적합 방지
         'optimizer':    'SGD',     # 최적화 방식
         'device':       'cpu',     # GPU: '0' / CPU: 'cpu'
-        'project':      r'E:\python\FIT_ME_UP\YOLO\fit_me_up',
+        'project':      r'C:\python\FIT_ME_UP\YOLO\fit_me_up',
         'name':         'full_body_only',
         'exist_ok':     True
     }

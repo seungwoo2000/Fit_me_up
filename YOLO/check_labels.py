@@ -2,8 +2,8 @@ import cv2
 import os
 
 # ── 확인할 폴더 경로 ───────────────────────────────────────
-images_dir = r"E:\python\FIT_ME_UP\YOLO\YOLO_ankle_visible_Labeling\images"
-labels_dir = r"E:\python\FIT_ME_UP\YOLO\YOLO_ankle_visible_Labeling\labels"
+images_dir = r"C:\python\FIT_ME_UP\YOLO\YOLO_ankle_visible_Labeling\images"
+labels_dir = r"C:\python\FIT_ME_UP\YOLO\YOLO_ankle_visible_Labeling\labels"
 
 # ── 클래스 이름 ────────────────────────────────────────────
 class_names = ['chair', 'desk', 'monitor']

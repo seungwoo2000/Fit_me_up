@@ -1,7 +1,7 @@
 task: detect
 mode: train
-model: E:\python\FIT_ME_UP\YOLO\yolov8n.pt
-data: E:\python\FIT_ME_UP\YOLO\data_full_body.yaml
+model: C:\python\FIT_ME_UP\YOLO\yolov8n.pt
+data: C:\python\FIT_ME_UP\YOLO\data_full_body.yaml
 epochs: 100
 time: null
 patience: 20
@@ -12,7 +12,7 @@ save_period: -1
 cache: false
 device: cpu
 workers: 8
-project: E:\python\FIT_ME_UP\YOLO\fit_me_up
+project: C:\python\FIT_ME_UP\YOLO\fit_me_up
 name: full_body_only
 exist_ok: true
 pretrained: true
@@ -107,4 +107,4 @@ auto_augment: randaugment
 erasing: 0.4
 cfg: null
 tracker: botsort.yaml
-save_dir: E:\python\Fit_me_up\YOLO\fit_me_up\full_body_only
+save_dir: C:\python\Fit_me_up\YOLO\fit_me_up\full_body_only
