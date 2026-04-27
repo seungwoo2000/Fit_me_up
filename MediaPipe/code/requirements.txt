@@ -1,0 +1,10 @@
+tensorflow
+mediapipe
+opencv-python
+scikit-learn
+pandas
+numpy
+Pillow
+joblib
+matplotlib
+requests

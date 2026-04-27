@@ -13,7 +13,13 @@ YOLO/YOLO_ankle_visible_Labeling/split_data/
 YOLO/fit_me_up/
 
 # YOLO 사전학습 가중치
-YOLO/*.pt
+YOLO/yolov8n.pt
 
 # YOLO 로그
 YOLO/runs/
+
+# MediaPipe 자동 다운로드 모델
+MediaPipe/data/models/
+
+# MediaPipe 학습 데이터 (용량 큼)
+MediaPipe/data/images/
