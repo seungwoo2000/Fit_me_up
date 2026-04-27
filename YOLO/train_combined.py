@@ -1,25 +1,23 @@
+# =====================================================================
+# train_combined.py | full_body + ankle_visible 통합 학습
+# 실행: python train_combined.py
+# =====================================================================
 from ultralytics import YOLO
-import torch
-import os
-import time
+import torch, os, time
 
-# ── 현재 파일 기준 경로 자동 감지 ─────────────────────────
-BASE = os.path.dirname(os.path.abspath(__file__))
+BASE = os.path.dirname(os.path.abspath(__file__))  # 경로 자동 감지
+
 
 def train(device):
     start      = time.time()
     device_tag = 'gpu' if device == '0' else 'cpu'
-    print(f">>> 사용 디바이스: {device_tag.upper()}")
+    print(f"\n>>> 디바이스: {device_tag.upper()}")
 
-    yaml_path    = os.path.join(BASE, 'data_combined.yaml')
-    test_sources = [
-        os.path.join(BASE, 'YOLO_full_body_Labeling',    'split_data', 'test', 'images'),
-        os.path.join(BASE, 'YOLO_ankle_visible_Labeling', 'split_data', 'test', 'images'),
-    ]
     model = YOLO(os.path.join(BASE, 'yolov8n.pt'))
 
+    # ── 하이퍼파라미터 (YOLOv8 공식 권장값) ──────────────────
     params = {
-        'data':         yaml_path,
+        'data':         os.path.join(BASE, 'data_combined.yaml'),
         'epochs':       100,
         'patience':     20,
         'batch':        16,
@@ -35,31 +33,39 @@ def train(device):
         'exist_ok':     True,
     }
 
-    print(">>> [Step 1] 학습 시작...")
+    # Step 1: 학습
+    print(">>> [Step 1] 학습...")
     t0 = time.time()
     model.train(**params)
-    print(f"⏱ 학습: {int((time.time()-t0)//60)}분 {int((time.time()-t0)%60)}초")
+    print(f"⏱ {int((time.time()-t0)//60)}분 {int((time.time()-t0)%60)}초")
 
-    print(">>> [Step 2] 검증 시작...")
+    # Step 2: 검증
+    print(">>> [Step 2] 검증...")
     t1 = time.time()
-    metrics = model.val()
-    print(f"⏱ 검증: {int((time.time()-t1)//60)}분 {int((time.time()-t1)%60)}초")
-    print(f"mAP50: {metrics.box.map50:.4f} | Precision: {metrics.box.mp:.4f} | Recall: {metrics.box.mr:.4f}")
+    m = model.val()
+    print(f"⏱ {int((time.time()-t1)//60)}분 {int((time.time()-t1)%60)}초")
+    print(f"  mAP50={m.box.map50:.4f} | Precision={m.box.mp:.4f} | Recall={m.box.mr:.4f}")
 
-    print(">>> [Step 3] 추론 시작...")
+    # Step 3: 추론
+    print(">>> [Step 3] 추론...")
+    sources = [
+        os.path.join(BASE, 'YOLO_full_body_Labeling',    'split_data', 'test', 'images'),
+        os.path.join(BASE, 'YOLO_ankle_visible_Labeling', 'split_data', 'test', 'images'),
+    ]
     t2 = time.time()
-    for source in test_sources:
-        if os.path.exists(source):
-            model.predict(source=source, save=True, conf=0.25)
-            print(f"완료: {source}")
+    for src in sources:
+        if os.path.exists(src):
+            model.predict(source=src, save=True, conf=0.25)
+            print(f"완료: {src}")
         else:
-            print(f"경로 없음: {source}")
-    print(f"⏱ 추론: {int((time.time()-t2)//60)}분 {int((time.time()-t2)%60)}초")
+            print(f"[WARN] 경로 없음: {src}")
+    print(f"⏱ {int((time.time()-t2)//60)}분 {int((time.time()-t2)%60)}초")
 
     elapsed = time.time() - start
-    print(f"\n⏱ combined_{device_tag} 총 소요시간: {int(elapsed//3600)}시간 {int((elapsed%3600)//60)}분 {int(elapsed%60)}초")
+    print(f"\n⏱ combined_{device_tag} 총 소요: "
+          f"{int(elapsed//3600)}h {int((elapsed%3600)//60)}m {int(elapsed%60)}s")
     return elapsed
 
+
 if __name__ == '__main__':
-    device = '0' if torch.cuda.is_available() else 'cpu'
-    train(device)
+    train('0' if torch.cuda.is_available() else 'cpu')

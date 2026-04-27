@@ -1,45 +1,61 @@
+# =====================================================================
+# .gitignore | Fit Me Up
+# =====================================================================
+
 # 가상환경
 .venv/
 
 # 파이썬 캐시
 __pycache__/
 *.pyc
+*.pyo
 
-# ── YOLO ──────────────────────────────────────────────────
+# ── YOLO ──────────────────────────────────────────────────────────────
 
-# 원본 이미지·라벨 (용량 큼)
+# 원본 이미지 (용량 큼 — Roboflow에서 별도 다운로드)
 YOLO/YOLO_full_body_Labeling/images/
 YOLO/YOLO_ankle_visible_Labeling/images/
 
-# 데이터 분할 결과 (split_images.py 실행하면 생성됨)
+# 데이터 분할 결과 (split_images.py 실행 시 자동 생성)
 YOLO/YOLO_full_body_Labeling/split_data/
 YOLO/YOLO_ankle_visible_Labeling/split_data/
 
-# 학습 결과 전체 (best.pt 제외)
-YOLO/fit_me_up/**/weights/last.pt
+# 사전학습 모델 (별도 다운로드 필요)
+YOLO/yolov8n.pt
+
+# 학습 로그 및 중간 결과물 (best.pt 제외)
+YOLO/fit_me_up/**/last.pt
 YOLO/fit_me_up/**/events.out.*
 YOLO/fit_me_up/**/*.png
 YOLO/fit_me_up/**/args.yaml
 YOLO/fit_me_up/**/train_batch*.jpg
 YOLO/fit_me_up/**/val_batch*.jpg
 YOLO/fit_me_up/**/predict/
-
-# best.pt는 포함 (streamlit 실행에 필요)
-!YOLO/fit_me_up/**/weights/best.pt
-
-# YOLO 사전학습 가중치 (용량 큼 - 별도 다운로드)
-YOLO/yolov8n.pt
-
-# YOLO 로그
 YOLO/runs/
 
-# ── MediaPipe ─────────────────────────────────────────────
+# best.pt는 포함 (Streamlit 실행에 필요)
+!YOLO/fit_me_up/**/weights/best.pt
 
-# 자동 다운로드 모델 (.task)
-MediaPipe/data/models/
+# ── MediaPipe ─────────────────────────────────────────────────────────
 
 # 학습 데이터 (용량 큼)
 MediaPipe/data/images/
 
-# 학습된 모델은 포함 (streamlit 실행에 필요)
+# MediaPipe .task 모델 (posture_test.py 실행 시 자동 다운로드)
+MediaPipe/data/models/
+
+# 학습된 모델은 포함 (Streamlit 실행에 필요)
 !MediaPipe/models/posture_mobilenetv2_finetuned.h5
+
+# ── 기타 ──────────────────────────────────────────────────────────────
+
+# 분석 결과 이미지 (integrate.py 실행 시 생성)
+result.jpg
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
