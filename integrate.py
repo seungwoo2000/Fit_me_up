@@ -9,17 +9,19 @@ from PIL import ImageFont, ImageDraw, Image
 import datetime
 import math
 
-sys.path.append(r"E:\python\Fit_me_up\MediaPipe\code")
+sys.path.append(r"E:\python\FIT_ME_UP\MediaPipe\code")
 from predict import predict_posture
 
 warnings.filterwarnings('ignore')
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
 # ── 경로 ──────────────────────────────────────────────────
-YOLO_MODEL    = r"E:\python\Fit_me_up\YOLO\fit_me_up\combined\weights\best.pt"
-IMAGE_PATH    = r"E:\python\Fit_me_up\test (3).jpg"
-MODEL_PATH_MP = r"E:\python\Fit_me_up\MediaPipe\models\pose_landmarker.task"
-LOGO_PATH     = r"E:\python\Fit_me_up\logo.png"
+YOLO_MODEL    = r"E:\python\FIT_ME_UP\YOLO\fit_me_up\combined_gpu\weights\best.pt"
+IMAGE_PATH    = r"E:\python\FIT_ME_UP\test (3).jpg"
+MODEL_PATH_MP = r"E:\python\FIT_ME_UP\MediaPipe\models\pose_landmarker.task"
+LOGO_PATH     = r"E:\python\FIT_ME_UP\logo.png"
+FONT_BOLD     = r"E:\python\FIT_ME_UP\Fonts\malgunbd.ttf"
+FONT_REG      = r"E:\python\FIT_ME_UP\Fonts\malgun.ttf"
 
 # ── 출력 해상도 ────────────────────────────────────────────
 TW, TH = 2560, 1440
@@ -27,8 +29,8 @@ IW     = 1200   # 이미지 영역
 PW     = TW-IW  # 패널 영역 1360px
 
 # ── 폰트 ──────────────────────────────────────────────────
-FP  = r"E:\python\Fit_me_up\Fonts\malgunbd.ttf"
-FPR = r"E:\python\Fit_me_up\Fonts\malgun.ttf"
+FP  = FONT_BOLD
+FPR = FONT_REG
 F10 = ImageFont.truetype(FPR, 13)
 F12 = ImageFont.truetype(FPR, 15)
 F14 = ImageFont.truetype(FPR, 17)
@@ -53,8 +55,8 @@ C = {
     'brand2':  (0,   155, 255),
     'good':    (42,  215, 130),
     'bad':     (255, 65,  65),
-    'ideal':   (255, 215, 0),    # 이상적 포인트 (금색)
-    'range':   (0,   160, 255),  # 정상범위 호 (파랑)
+    'ideal':   (255, 215, 0),
+    'range':   (0,   160, 255),
     'blue':    (35,  105, 235),
     'skel':    (0,   215, 190),
     'chair':   (255, 150, 40),
@@ -143,7 +145,6 @@ def judge(v,mn,mx):
 
 # ── 측면 스켈레톤 (우측만) ────────────────────────────────
 def draw_skeleton(img, lm, h, w):
-    # 우측 측면 연결
     conns = [
         (8, 12),   # 귀 → 어깨
         (12, 14),  # 어깨 → 팔꿈치
@@ -173,7 +174,6 @@ def draw_ideal_arc(img, center, p1, p2, current_angle,
     x1,y1 = int(p1[0]),int(p1[1])
     x2,y2 = int(p2[0]),int(p2[1])
 
-    # 두 벡터 기준 각도 계산
     v1 = np.array([x1-cx,y1-cy],dtype=float)
     v2 = np.array([x2-cx,y2-cy],dtype=float)
 
@@ -183,7 +183,6 @@ def draw_ideal_arc(img, center, p1, p2, current_angle,
     a1 = ang(v1)
     a2 = ang(v2)
 
-    # 정상범위 호 (파란색 반투명)
     range_col = C['range']
     ov        = img.copy()
     cv2.ellipse(ov,(cx,cy),(radius,radius),0,
@@ -191,7 +190,6 @@ def draw_ideal_arc(img, center, p1, p2, current_angle,
                 (range_col[2],range_col[1],range_col[0]),4)
     cv2.addWeighted(ov,0.5,img,0.5,0,img)
 
-    # 이상적 포인트 (중간 각도)
     ideal_ang_rad = math.radians((a1+a2)/2)
     ix = int(cx + radius*math.cos(ideal_ang_rad))
     iy = int(cy + radius*math.sin(ideal_ang_rad))
@@ -210,11 +208,9 @@ def draw_yolo_boxes(img, bbox):
         rc = cm[name]
         pc = (rc[0],rc[1],rc[2])
         x1,y1,x2,y2 = b['x_min'],b['y_min'],b['x_max'],b['y_max']
-        # 반투명 오버레이
         ov = img.copy()
         cv2.rectangle(ov,(x1,y1),(x2,y2),(rc[2],rc[1],rc[0]),2)
         cv2.addWeighted(ov,0.7,img,0.3,0,img)
-        # 다시 PIL로
         pil = Image.fromarray(cv2.cvtColor(img,cv2.COLOR_BGR2RGB))
         d   = ImageDraw.Draw(pil)
         sz  = 16
@@ -322,11 +318,9 @@ def build_panel(img, pd_, ed_, is_good, conf):
     hh = C['header']
     draw.rectangle([(IW,0),(TW,110)],fill=(hh[0],hh[1],hh[2]))
 
-    # 로고 자연스럽게 (흑백 → 브랜드색 블렌드)
     logo_ok = False
     try:
-        logo = Image.open(LOGO_PATH).convert("L")  # 흑백 변환
-        # 브랜드 청록으로 컬러 매핑
+        logo = Image.open(LOGO_PATH).convert("L")
         logo_color = Image.new("RGB", logo.size, (0,215,190))
         logo_alpha = logo.point(lambda p: int(p * 0.85))
         logo_rgba  = Image.merge("RGBA",[logo_color.split()[0],
@@ -344,7 +338,6 @@ def build_panel(img, pd_, ed_, is_good, conf):
     except:
         lx = px
 
-    # 브랜드 텍스트
     ac = C['brand']
     if logo_ok:
         tw_ = C['tw']
@@ -360,7 +353,6 @@ def build_panel(img, pd_, ed_, is_good, conf):
         draw.text((px,58),"beyond the hospital, in to your life",
                   font=F14,fill=(tg_[0],tg_[1],tg_[2]))
 
-    # 우측 정보
     now = datetime.datetime.now().strftime("%Y.%m.%d  %H:%M")
     td_ = C['td']
     tg_ = C['tg']
@@ -373,7 +365,7 @@ def build_panel(img, pd_, ed_, is_good, conf):
     draw.rectangle([(IW,107),(TW,111)],fill=(ac[0],ac[1],ac[2]))
     py = 120
 
-    # ── 범례 (이미지 영역 우하단) ──────────────────────────
+    # ── 범례 ───────────────────────────────────────────────
     legend_items = [
         (C['skel'],  "측면 골격선"),
         (C['good'],  "정상 판정"),
@@ -402,7 +394,6 @@ def build_panel(img, pd_, ed_, is_good, conf):
     draw.rounded_rectangle([(px,py),(px+7,py+105)],
                            radius=5,fill=(sc_[0],sc_[1],sc_[2]))
 
-    # 스코어 원
     cr  = 42
     ccx = px+INNER-cr-20
     ccy = py+52
@@ -454,7 +445,6 @@ def build_panel(img, pd_, ed_, is_good, conf):
             if py > TH-60: break
         return py
 
-    # BAD
     if not is_good:
         bad_ = C['bad']
         py   = draw_sec(draw,px,py,INNER,
@@ -463,7 +453,6 @@ def build_panel(img, pd_, ed_, is_good, conf):
                         bad_)
         py = render_cards(draw,pd_,py)
 
-    # GOOD
     else:
         gd_ = C['good']
         py  = draw_sec(draw,px,py,INNER,
@@ -552,7 +541,7 @@ def analyze(image_path):
         cls_  = int(box.cls[0])
         conf_ = float(box.conf[0])
         name  = CLASS_NAMES.get(cls_)
-        if name and conf_>=0.45:
+        if name and conf_>=0.25:
             x1,y1,x2,y2 = map(int,box.xyxy[0])
             bbox[name]={'x_min':x1,'y_min':y1,'x_max':x2,'y_max':y2}
 
@@ -604,19 +593,14 @@ def analyze(image_path):
     print("─"*50)
 
     # ── 시각화 ─────────────────────────────────────────────
-
-    # 1. 우측 측면 스켈레톤 (청록)
     draw_skeleton(img,lm,h,w)
 
-    # 2. 정상범위 호 + 이상적 포인트 (금색)
     draw_ideal_arc(img,elbow_r,sh_r,wrist_r,el,90,120,pd_['팔꿈치'][1],50)
     draw_ideal_arc(img,knee_r, hp_r,ankle_r,kn,85,100,pd_['무릎'][1],  50)
     draw_ideal_arc(img,wrist_r,elbow_r,finger,wr,165,180,pd_['손목'][1],40)
 
-    # 3. YOLO bbox
     draw_yolo_boxes(img,bbox)
 
-    # 4. 관절 포인트 Good/Bad
     draw_point(img,ear_r,   pd_['CVA'][1],    '①목')
     draw_point(img,sh_mid,  pd_['TIA'][1],    '②허리')
     draw_point(img,elbow_r, pd_['팔꿈치'][1], '③팔꿈치')
@@ -631,9 +615,8 @@ def analyze(image_path):
         if gr is not None:
             draw_point(img,hp_r,  ed_['등받이'][1],  '⑧등받이')
 
-    # 5. 패널 빌드 & 저장
     final = build_panel(img,pd_,ed_,is_good,conf)
-    out   = r"E:\python\Fit_me_up\result.jpg"
+    out   = r"E:\python\FIT_ME_UP\result.jpg"
     cv2.imwrite(out,final,[cv2.IMWRITE_JPEG_QUALITY,98])
     print(f"\n✅ 저장 완료 ({TW}×{TH}): {out}")
 
