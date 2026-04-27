@@ -1,6 +1,6 @@
-train: E:\python\FIT_ME_UP\YOLO\YOLO_full_body_Labeling\split_data\train\images
-val:   E:\python\FIT_ME_UP\YOLO\YOLO_full_body_Labeling\split_data\val\images
-test:  E:\python\FIT_ME_UP\YOLO\YOLO_full_body_Labeling\split_data\test\images
+train: YOLO_full_body_Labeling/split_data/train/images
+val:   YOLO_full_body_Labeling/split_data/val/images
+test:  YOLO_full_body_Labeling/split_data/test/images
 
 nc: 3
 names: ['chair', 'desk', 'monitor']

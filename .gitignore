@@ -5,21 +5,41 @@
 __pycache__/
 *.pyc
 
-# 데이터 분할 결과 (용량 큼)
+# ── YOLO ──────────────────────────────────────────────────
+
+# 원본 이미지·라벨 (용량 큼)
+YOLO/YOLO_full_body_Labeling/images/
+YOLO/YOLO_ankle_visible_Labeling/images/
+
+# 데이터 분할 결과 (split_images.py 실행하면 생성됨)
 YOLO/YOLO_full_body_Labeling/split_data/
 YOLO/YOLO_ankle_visible_Labeling/split_data/
 
-# YOLO 학습 결과 (용량 큼)
-YOLO/fit_me_up/
+# 학습 결과 전체 (best.pt 제외)
+YOLO/fit_me_up/**/weights/last.pt
+YOLO/fit_me_up/**/events.out.*
+YOLO/fit_me_up/**/*.png
+YOLO/fit_me_up/**/args.yaml
+YOLO/fit_me_up/**/train_batch*.jpg
+YOLO/fit_me_up/**/val_batch*.jpg
+YOLO/fit_me_up/**/predict/
 
-# YOLO 사전학습 가중치
+# best.pt는 포함 (streamlit 실행에 필요)
+!YOLO/fit_me_up/**/weights/best.pt
+
+# YOLO 사전학습 가중치 (용량 큼 - 별도 다운로드)
 YOLO/yolov8n.pt
 
 # YOLO 로그
 YOLO/runs/
 
-# MediaPipe 자동 다운로드 모델
+# ── MediaPipe ─────────────────────────────────────────────
+
+# 자동 다운로드 모델 (.task)
 MediaPipe/data/models/
 
-# MediaPipe 학습 데이터 (용량 큼)
+# 학습 데이터 (용량 큼)
 MediaPipe/data/images/
+
+# 학습된 모델은 포함 (streamlit 실행에 필요)
+!MediaPipe/models/posture_mobilenetv2_finetuned.h5
