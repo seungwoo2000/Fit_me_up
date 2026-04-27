@@ -1,12 +1,12 @@
 train:
-  - C\python\FIT_ME_UP\YOLO\YOLO_full_body_Labeling\split_data\train\images
-  - C:\python\FIT_ME_UP\YOLO\YOLO_ankle_visible_Labeling\split_data\train\images
+  - E:\python\FIT_ME_UP\YOLO\YOLO_full_body_Labeling\split_data\train\images
+  - E:\python\FIT_ME_UP\YOLO\YOLO_ankle_visible_Labeling\split_data\train\images
 val:
-  - C:\python\FIT_ME_UP\YOLO\YOLO_full_body_Labeling\split_data\val\images
-  - C:\python\FIT_ME_UP\YOLO\YOLO_ankle_visible_Labeling\split_data\val\images
+  - E:\python\FIT_ME_UP\YOLO\YOLO_full_body_Labeling\split_data\val\images
+  - E:\python\FIT_ME_UP\YOLO\YOLO_ankle_visible_Labeling\split_data\val\images
 test:
-  - C:\python\FIT_ME_UP\YOLO\YOLO_full_body_Labeling\split_data\test\images
-  - C:\python\FIT_ME_UP\YOLO\YOLO_ankle_visible_Labeling\split_data\test\images
+  - E:\python\FIT_ME_UP\YOLO\YOLO_full_body_Labeling\split_data\test\images
+  - E:\python\FIT_ME_UP\YOLO\YOLO_ankle_visible_Labeling\split_data\test\images
 
 nc: 3
 names: ['chair', 'desk', 'monitor']

@@ -1,3 +1,5 @@
+# cd YOLO
+# python split_images.py
 import os
 import shutil
 import random
@@ -32,14 +34,14 @@ def split_dataset(images_dir, labels_dir, output_dir):
 
 # ── full_body ──────────────────────────────────────────────
 split_dataset(
-    images_dir = r"C:\python\FIT_ME_UP\YOLO\YOLO_full_body_Labeling\images",
-    labels_dir = r"C:\python\FIT_ME_UP\YOLO\YOLO_full_body_Labeling\labels",
-    output_dir = r"C:\python\FIT_ME_UP\YOLO\YOLO_full_body_Labeling\split_data"
+    images_dir = r"E:\python\FIT_ME_UP\YOLO\YOLO_full_body_Labeling\images",
+    labels_dir = r"E:\python\FIT_ME_UP\YOLO\YOLO_full_body_Labeling\labels",
+    output_dir = r"E:\python\FIT_ME_UP\YOLO\YOLO_full_body_Labeling\split_data"
 )
 
 # ── ankle_visible ──────────────────────────────────────────
 split_dataset(
-    images_dir = r"C:\python\FIT_ME_UP\YOLO\YOLO_ankle_visible_Labeling\images",
-    labels_dir = r"C:\python\FIT_ME_UP\YOLO\YOLO_ankle_visible_Labeling\labels",
-    output_dir = r"C:\python\FIT_ME_UP\YOLO\YOLO_ankle_visible_Labeling\split_data"
+    images_dir = r"E:\python\FIT_ME_UP\YOLO\YOLO_ankle_visible_Labeling\images",
+    labels_dir = r"E:\python\FIT_ME_UP\YOLO\YOLO_ankle_visible_Labeling\labels",
+    output_dir = r"E:\python\FIT_ME_UP\YOLO\YOLO_ankle_visible_Labeling\split_data"
 )

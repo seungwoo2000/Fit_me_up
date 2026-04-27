@@ -8,3 +8,12 @@ __pycache__/
 # 데이터 분할 결과 (용량 큼)
 YOLO/YOLO_full_body_Labeling/split_data/
 YOLO/YOLO_ankle_visible_Labeling/split_data/
+
+# YOLO 학습 결과 (용량 큼)
+YOLO/fit_me_up/
+
+# YOLO 사전학습 가중치
+YOLO/*.pt
+
+# YOLO 로그
+YOLO/runs/
