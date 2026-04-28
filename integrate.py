@@ -221,7 +221,7 @@ def step3_yolo(image_path):
     bboxes = {'chair': None, 'desk': None, 'monitor': None}
     if not os.path.exists(YOLO_MODEL):
         return bboxes
-    res   = YOLOModel(YOLO_MODEL).predict(source=image_path, conf=0.45, verbose=False)
+    res   = YOLOModel(YOLO_MODEL).predict(source=image_path, conf=0.45, iou=0.3, verbose=False)
     boxes = res[0].boxes
     if boxes and len(boxes) > 0:
         for box in boxes:
@@ -368,11 +368,14 @@ def step5_overlay(image_path, lm, h, w, all_ind, early_stop):
 
     keys = ['cva','tia'] if early_stop else list(JOINT_REF.keys())
 
+    num = 1  # 관절 번호 (피드백 카드와 매칭)
     for key in keys:
         info = all_ind.get(key)
         if not info: continue
         ok = info.get('ok')
-        if ok is None: continue
+        if ok is None:
+            num += 1
+            continue
 
         joint_pt, ref_pt = JOINT_REF[key]()
 
@@ -398,47 +401,16 @@ def step5_overlay(image_path, lm, h, w, all_ind, early_stop):
                             cv2.FONT_HERSHEY_SIMPLEX, 0.48,
                             (80, 80, 230), 1, cv2.LINE_AA)
 
-    # ── HUD 패널 (우측 상단) ──────────────────────────────────────────
-    hud_keys = ['cva','tia'] if early_stop else list(INDICATOR_NAMES.keys())
-    panel_h  = 22 + len(hud_keys) * 22 + 8
-    panel_w  = 155
-    px0, py0 = iw - panel_w - 12, 12
-
-    overlay = img.copy()
-    cv2.rectangle(overlay, (px0-6, py0-6), (px0+panel_w, py0+panel_h),
-                  COLOR_HUD_BG, -1)
-    cv2.addWeighted(overlay, 0.75, img, 0.25, 0, img)
-    cv2.rectangle(img, (px0-6, py0-6), (px0+panel_w, py0+panel_h),
-                  (80,70,120), 1)
-
-    cv2.putText(img, "Fit me up", (px0, py0+10),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.42, (180,160,255), 1, cv2.LINE_AA)
-
-    for i, key in enumerate(hud_keys):
-        r    = all_ind.get(key, {})
-        ok   = r.get('ok')
-        v    = r.get('value')
-        name = INDICATOR_NAMES.get(key, key)
-        unit = IND_UNITS.get(key, '')
-        ty   = py0 + 26 + i * 22
-
-        color_txt = (100,220,120) if ok else ((100,100,230) if ok is False else (130,130,130))
-        val_str   = f"{v}{unit}" if v is not None else "N/A"
-        status    = "GOOD" if ok else ("BAD" if ok is False else "N/A")
-
-        cv2.putText(img, f"{name[:8]:<8}", (px0, ty),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.38, (200,195,220), 1, cv2.LINE_AA)
-        cv2.putText(img, f"{val_str:>7} {status}", (px0+62, ty),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.38, color_txt, 1, cv2.LINE_AA)
-
-    # ── 최종 판정 뱃지 (좌측 상단) ───────────────────────────────────
-    any_bad  = any(all_ind.get(k,{}).get('ok') is False for k in hud_keys)
-    verdict  = "BAD" if any_bad else "GOOD"
-    v_color  = COLOR_BAD if any_bad else COLOR_GOOD
-    cv2.rectangle(img, (10, 10), (82, 40), v_color, -1)
-    cv2.rectangle(img, (10, 10), (82, 40), (255,255,255), 1)
-    cv2.putText(img, verdict, (16, 32),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255,255,255), 2, cv2.LINE_AA)
+        # 번호 원형 배경 + 텍스트
+        num_pt = (joint_pt[0] - 18, joint_pt[1] - 18)
+        num_color = COLOR_GOOD if ok else COLOR_BAD
+        cv2.circle(img, num_pt, 9, num_color, -1)
+        cv2.circle(img, num_pt, 10, (255,255,255), 1)
+        cv2.putText(img, str(num),
+                    (num_pt[0] - 4 if num < 10 else num_pt[0] - 6, num_pt[1] + 4),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.35,
+                    (255,255,255), 1, cv2.LINE_AA)
+        num += 1
 
     return img
 
@@ -484,7 +456,7 @@ class IntegrateApp:
     def __init__(self, root):
         self.root       = root
         self.root.title("Fit me up | 자세 통합 분석")
-        self.root.geometry("1150x740")
+        self.root.geometry("1200x820")
         self.root.configure(bg="#f4f4f4")
         self.image_path = None
         self.tk_img     = None
@@ -496,20 +468,21 @@ class IntegrateApp:
                  bg="#1e1e2e", fg="white", pady=10
         ).pack(fill=tk.X)
 
-        main = tk.Frame(self.root, bg="#f4f4f4")
-        main.pack(pady=14, padx=18, fill=tk.BOTH, expand=True)
+        # ── 상단: 이미지 + CNN 판정 ───────────────────────────────────
+        top = tk.Frame(self.root, bg="#f4f4f4")
+        top.pack(pady=10, padx=18, fill=tk.X)
 
-        # ── 왼쪽: 캔버스 ──────────────────────────────────────────────
-        left = tk.Frame(main, bg="#f4f4f4")
-        left.pack(side=tk.LEFT, padx=8)
+        # 이미지 캔버스
+        left = tk.Frame(top, bg="#f4f4f4")
+        left.pack(side=tk.LEFT)
 
-        self.canvas = tk.Canvas(left, width=530, height=530,
+        self.canvas = tk.Canvas(left, width=480, height=480,
                                 bg="white", highlightthickness=1,
                                 highlightbackground="#ccc")
         self.canvas.pack()
 
         btn_row = tk.Frame(left, bg="#f4f4f4")
-        btn_row.pack(pady=10)
+        btn_row.pack(pady=8)
         tk.Button(btn_row, text="📁 이미지 선택", command=self.select_image,
                   width=15, bg="#3498db", fg="white", relief=tk.FLAT).pack(side=tk.LEFT, padx=4)
         tk.Button(btn_row, text="🔍 분석 시작",  command=self.run_analysis,
@@ -517,56 +490,43 @@ class IntegrateApp:
         tk.Button(btn_row, text="🔄 초기화",     command=self.reset,
                   width=10, bg="#95a5a6", fg="white", relief=tk.FLAT).pack(side=tk.LEFT, padx=4)
 
-        # ── 오른쪽: 결과 ──────────────────────────────────────────────
-        right = tk.Frame(main, bg="#f4f4f4")
-        right.pack(side=tk.LEFT, padx=14, fill=tk.Y)
+        # CNN 판정 (이미지 오른쪽)
+        cnn_area = tk.Frame(top, bg="#f4f4f4")
+        cnn_area.pack(side=tk.LEFT, padx=20, anchor="n")
 
-        # CNN 판정
-        self.res_panel = tk.Frame(right, width=350, height=76,
+        self.res_panel = tk.Frame(cnn_area, width=200, height=90,
                                   bg="#ecf0f1", relief=tk.RIDGE, bd=2)
         self.res_panel.pack_propagate(False)
-        self.res_panel.pack(pady=(0,8))
+        self.res_panel.pack(pady=(10,4))
         self.lbl_result = tk.Label(self.res_panel, text="READY",
-                                   font=("Arial", 26, "bold"),
+                                   font=("Arial", 28, "bold"),
                                    bg="#ecf0f1", fg="#7f8c8d")
         self.lbl_result.pack(expand=True)
-        self.lbl_conf = tk.Label(right, text="신뢰도: —",
-                                 font=("Malgun Gothic", 10), bg="#f4f4f4",
-                                 fg="#555")
-        self.lbl_conf.pack(pady=(0,10))
+        self.lbl_conf = tk.Label(cnn_area, text="신뢰도: —",
+                                 font=("Malgun Gothic", 10), bg="#f4f4f4", fg="#555")
+        self.lbl_conf.pack()
 
-        # 지표 행
-        tk.Label(right, text="지표 판정",
-                 font=("Malgun Gothic", 11, "bold"), bg="#f4f4f4").pack(anchor="w")
-        self.ind_labels = {}
-        for key, name in INDICATOR_NAMES.items():
-            row = tk.Frame(right, bg="#f4f4f4")
-            row.pack(fill=tk.X, pady=2)
-            tk.Label(row, text=f"{name}",
-                     font=("Malgun Gothic", 9), bg="#f4f4f4",
-                     width=14, anchor="w").pack(side=tk.LEFT)
-            lbl = tk.Label(row, text="—", font=("Malgun Gothic", 9),
-                           bg="#f4f4f4", width=18, anchor="w")
-            lbl.pack(side=tk.LEFT)
-            self.ind_labels[key] = lbl
+        # ── 하단: 피드백 카드 전체 너비 ──────────────────────────────
+        tk.Label(self.root, text="피드백",
+                 font=("Malgun Gothic", 12, "bold"),
+                 bg="#f4f4f4").pack(anchor="w", padx=18, pady=(4,2))
 
-        # 피드백 카드 영역 (스크롤)
-        tk.Label(right, text="피드백",
-                 font=("Malgun Gothic", 11, "bold"), bg="#f4f4f4").pack(anchor="w", pady=(10,4))
-        fb_outer = tk.Frame(right, bg="#f4f4f4")
-        fb_outer.pack(fill=tk.BOTH, expand=True)
+        fb_outer = tk.Frame(self.root, bg="#f4f4f4")
+        fb_outer.pack(fill=tk.BOTH, expand=True, padx=18, pady=(0,10))
 
-        self.fb_canvas  = tk.Canvas(fb_outer, bg="#f4f4f4", highlightthickness=0, width=350)
-        scrollbar       = tk.Scrollbar(fb_outer, orient="vertical", command=self.fb_canvas.yview)
-        self.fb_frame   = tk.Frame(self.fb_canvas, bg="#f4f4f4")
+        self.fb_canvas = tk.Canvas(fb_outer, bg="#f4f4f4", highlightthickness=0)
+        scrollbar      = tk.Scrollbar(fb_outer, orient="vertical", command=self.fb_canvas.yview)
+        self.fb_frame  = tk.Frame(self.fb_canvas, bg="#f4f4f4")
 
         self.fb_frame.bind("<Configure>",
             lambda e: self.fb_canvas.configure(scrollregion=self.fb_canvas.bbox("all")))
         self.fb_canvas.create_window((0,0), window=self.fb_frame, anchor="nw")
-        self.fb_canvas.configure(yscrollcommand=scrollbar.set, height=230)
+        self.fb_canvas.configure(yscrollcommand=scrollbar.set)
 
         self.fb_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        self.ind_labels = {}
 
     # ── 피드백 카드 생성 ──────────────────────────────────────────────
     def _build_feedback_cards(self, all_ind, early_stop):
@@ -575,7 +535,13 @@ class IntegrateApp:
 
         keys = ['cva','tia'] if early_stop else list(INDICATOR_NAMES.keys())
 
-        for key in keys:
+        # 2열 그리드 컨테이너
+        grid = tk.Frame(self.fb_frame, bg="#f4f4f4")
+        grid.pack(fill=tk.BOTH, expand=True)
+        for c in range(4):
+            grid.columnconfigure(c, weight=1)
+
+        for idx, key in enumerate(keys):
             r    = all_ind.get(key, {})
             ok   = r.get('ok')
             v    = r.get('value')
@@ -585,7 +551,7 @@ class IntegrateApp:
 
             if ok is None:
                 status, border, badge_bg, badge_fg, msg = \
-                    "N/A", "#aaa", "#eee", "#555", fb.get('na','—')
+                    "측정불가", "#aaa", "#eee", "#555", fb.get('na','—')
                 val_color = "#aaa"
             elif ok:
                 status, border, badge_bg, badge_fg, msg = \
@@ -596,44 +562,47 @@ class IntegrateApp:
                     "BAD", "#E24B4A", "#fde8e8", "#7a1010", fb.get('bad','')
                 val_color = "#E24B4A"
 
-            card = tk.Frame(self.fb_frame, bg="white",
+            col = idx % 4
+            row = idx // 4
+
+            card = tk.Frame(grid, bg="white",
                             highlightbackground=border,
                             highlightthickness=2,
                             relief=tk.FLAT)
-            card.pack(fill=tk.X, pady=4, padx=2)
+            card.grid(row=row, column=col, padx=4, pady=4, sticky="nsew")
 
-            # 왼쪽 컬러 바
-            tk.Frame(card, bg=border, width=5).pack(side=tk.LEFT, fill=tk.Y)
+            # 상단 컬러 바
+            tk.Frame(card, bg=border, height=4).pack(fill=tk.X)
 
-            body = tk.Frame(card, bg="white", padx=10, pady=8)
-            body.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+            body = tk.Frame(card, bg="white", padx=8, pady=7)
+            body.pack(fill=tk.BOTH, expand=True)
 
-            # 헤더: 이름 + 뱃지
+            # 이름 + 뱃지
             hdr = tk.Frame(body, bg="white")
             hdr.pack(fill=tk.X)
-            tk.Label(hdr, text=name, font=("Malgun Gothic", 10, "bold"),
+            tk.Label(hdr, text=f"{idx+1}. {name}", font=("Malgun Gothic", 9, "bold"),
                      bg="white", fg="#222").pack(side=tk.LEFT)
             tk.Label(hdr, text=f" {status} ",
-                     font=("Malgun Gothic", 8, "bold"),
+                     font=("Malgun Gothic", 7, "bold"),
                      bg=badge_bg, fg=badge_fg,
-                     relief=tk.FLAT, padx=4).pack(side=tk.RIGHT)
+                     relief=tk.FLAT, padx=3).pack(side=tk.RIGHT)
 
-            # 측정값 + 정상범위
-            val_row = tk.Frame(body, bg="white")
-            val_row.pack(fill=tk.X, pady=(3,0))
+            # 측정값
             val_str = f"{v}{unit}" if v is not None else "—"
-            tk.Label(val_row, text=val_str,
-                     font=("Arial", 16, "bold"),
-                     bg="white", fg=val_color).pack(side=tk.LEFT)
-            tk.Label(val_row, text=f"  정상: {fb.get('range','—')}",
-                     font=("Malgun Gothic", 8),
-                     bg="white", fg="#888").pack(side=tk.LEFT, pady=(4,0))
+            tk.Label(body, text=val_str,
+                     font=("Arial", 15, "bold"),
+                     bg="white", fg=val_color, anchor="w").pack(fill=tk.X, pady=(3,0))
+
+            # 정상범위
+            tk.Label(body, text=f"정상: {fb.get('range','—')}",
+                     font=("Malgun Gothic", 7),
+                     bg="white", fg="#888", anchor="w").pack(fill=tk.X)
 
             # 피드백 메시지
             tk.Label(body, text=msg,
-                     font=("Malgun Gothic", 8), bg="white",
-                     fg="#444", wraplength=295,
-                     justify=tk.LEFT, anchor="w").pack(fill=tk.X, pady=(4,0))
+                     font=("Malgun Gothic", 7), bg="white",
+                     fg="#444", wraplength=220,
+                     justify=tk.LEFT, anchor="w").pack(fill=tk.X, pady=(3,0))
 
     # ── 이미지 선택 ───────────────────────────────────────────────────
     def select_image(self):
@@ -671,21 +640,6 @@ class IntegrateApp:
         self.res_panel.config(bg=color)
         self.lbl_conf.config(text=f"신뢰도: {conf:.1f}%")
 
-        # 지표 라벨
-        for key, lbl in self.ind_labels.items():
-            r  = all_ind.get(key)
-            if r is None:
-                lbl.config(text="—", fg="#aaa"); continue
-            ok = r.get('ok')
-            v  = r.get('value')
-            unit = IND_UNITS.get(key,'')
-            if ok is None:
-                lbl.config(text="N/A", fg="#aaa")
-            elif ok:
-                lbl.config(text=f"✓  {v}{unit}", fg="#1D9E75")
-            else:
-                lbl.config(text=f"✗  {v}{unit}", fg="#e74c3c")
-
         # 피드백 카드
         self._build_feedback_cards(all_ind, early_stop)
 
@@ -703,8 +657,6 @@ class IntegrateApp:
         self.lbl_result.config(text="READY", bg="#ecf0f1", fg="#7f8c8d")
         self.res_panel.config(bg="#ecf0f1")
         self.lbl_conf.config(text="신뢰도: —")
-        for lbl in self.ind_labels.values():
-            lbl.config(text="—", fg="#aaa")
         for w in self.fb_frame.winfo_children():
             w.destroy()
 
