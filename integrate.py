@@ -410,24 +410,6 @@ def step5_overlay(image_path, lm, h, w, all_ind, early_stop, bboxes=None):
         if is_vis(lm, a) and is_vis(lm, b):
             cv2.line(img, pt(a), pt(b), COLOR_BONE, 2, cv2.LINE_AA)
 
-    # ── YOLO 바운딩박스 ───────────────────────────────────────────────
-    YOLO_COLORS = {
-        'chair':   (255, 150,  40),   # 주황
-        'desk':    ( 40, 205, 255),   # 하늘
-        'monitor': (185,  70, 255),   # 보라
-    }
-    if bboxes:
-        for name, b in bboxes.items():
-            if b is None:
-                continue
-            x1,y1,x2,y2 = int(b['x_min']),int(b['y_min']),int(b['x_max']),int(b['y_max'])
-            color = YOLO_COLORS.get(name, (200,200,200))
-            cv2.rectangle(img, (x1,y1), (x2,y2), color, 2)
-            label_bg_x2 = min(x1 + len(name)*13 + 16, x2)
-            cv2.rectangle(img, (x1, max(0,y1-26)), (label_bg_x2, y1), color, -1)
-            cv2.putText(img, name, (x1+5, y1-7),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255,255,255), 2, cv2.LINE_AA)
-
     # ── 지표별 관절 포인트 정의 ───────────────────────────────────────
     # CVA: 귀 + 어깨 (2개 점 + 연결선)
     # TIA: 어깨 중점 + 골반 중점 (2개 점 + 연결선)
