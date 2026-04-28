@@ -176,41 +176,60 @@ def step1_mediapipe(image_path):
 
 
 # =====================================================================
-# Step 2. CNN + CVA·TIA 1차 판정
+# Step 2. MLP 예측 + CVA·TIA 1차 판정
+# predict.py(MLP)가 관절 추출 + CVA/TIA 계산을 포함하므로
+# raw_landmarks를 Step 1 결과 대신 재활용
 # =====================================================================
-def step2_cnn_cva_tia(image_path, lm, h, w):
+def step2_mlp_cva_tia(image_path):
     sys.path.insert(0, os.path.join(BASE, 'MediaPipe', 'code'))
     from predict import predict_posture
-    cnn = predict_posture(image_path)
-    if 'error' in cnn:
-        return cnn, None
+
+    res = predict_posture(image_path)
+
+    if res is None or 'error' in res:
+        return res, None, None, None, None
+
+    # raw_landmarks → integrate.py 형식으로 변환
+    # predict.py: {idx: {'x','y','vis'}}
+    # integrate.py: lm 리스트 (lm[idx].x, lm[idx].y, lm[idx].visibility)
+    raw = res.get('raw_landmarks', {})
+
+    class _LM:
+        def __init__(self, x, y, vis):
+            self.x, self.y, self.visibility = x, y, vis
+
+    lm = [_LM(raw[i]['x'], raw[i]['y'], raw[i]['vis']) for i in range(33)]
+    h  = res.get('img_h', 1)
+    w  = res.get('img_w', 1)
+
+    cva = res.get('CVA')
+    tia = res.get('TIA')
 
     all_ind = {}
 
-    # CVA: 귀→어깨 (좌우 중 visibility 높은 쪽)
-    try:
+    # CVA 판정
+    if cva is not None:
         ear_idx, sh_idx = best_pair(lm, 7, 8, 11, 12)
-        if is_vis(lm, ear_idx) and is_vis(lm, sh_idx):
-            cva = clip_val(calc_vertical_angle(to_norm(lm, ear_idx), to_norm(lm, sh_idx)), 0, 90)
-            all_ind['cva'] = {'value': round(cva, 1), 'ok': cva <= THRESHOLD_CVA,
-                              'joints': (ear_idx, sh_idx)}
-        else:
-            all_ind['cva'] = {'value': None, 'ok': None, 'joints': (ear_idx, sh_idx)}
-    except Exception:
+        all_ind['cva'] = {
+            'value': round(cva, 1),
+            'ok':    cva <= THRESHOLD_CVA,
+            'joints': (ear_idx, sh_idx)
+        }
+    else:
         all_ind['cva'] = {'value': None, 'ok': None, 'joints': (8, 12)}
 
-    # TIA: 어깨중점→골반중점 (좌우 중 visibility 합 높은 쪽)
-    try:
-        sh_idx, hp_idx = best_pair(lm, 11, 12, 23, 24)
-        sh_norm = to_norm(lm, sh_idx)
-        hp_norm = to_norm(lm, hp_idx)
-        tia = clip_val(calc_vertical_angle(sh_norm, hp_norm), 0, 60)
-        all_ind['tia'] = {'value': round(tia, 1), 'ok': tia <= THRESHOLD_TIA,
-                          'joints': (sh_idx, hp_idx)}
-    except Exception:
+    # TIA 판정
+    if tia is not None:
+        sh_idx2, hp_idx = best_pair(lm, 11, 12, 23, 24)
+        all_ind['tia'] = {
+            'value': round(tia, 1),
+            'ok':    tia <= THRESHOLD_TIA,
+            'joints': (sh_idx2, hp_idx)
+        }
+    else:
         all_ind['tia'] = {'value': None, 'ok': None, 'joints': (12, 24)}
 
-    return cnn, all_ind
+    return res, all_ind, lm, h, w
 
 
 # =====================================================================
@@ -422,15 +441,12 @@ def run_pipeline(image_path):
     img_cv       = cv2.imread(image_path)
     img_h, img_w = img_cv.shape[:2]
 
-    # Step 1
-    lm, h, w = step1_mediapipe(image_path)
-    if lm is None:
-        return None, None, None, "관절 탐지 실패 — 측면 이미지를 사용하세요."
+    # Step 1 + 2: MLP가 내부적으로 MediaPipe 포함 → 함께 처리
+    mlp_res, all_ind, lm, h, w = step2_mlp_cva_tia(image_path)
 
-    # Step 2
-    cnn, all_ind = step2_cnn_cva_tia(image_path, lm, h, w)
-    if 'error' in cnn:
-        return None, None, None, f"CNN 오류: {cnn['error']}"
+    if mlp_res is None or 'error' in (mlp_res or {}):
+        err = (mlp_res or {}).get('error', '관절 탐지 실패')
+        return None, None, None, err
 
     cva_ok     = all_ind.get('cva', {}).get('ok')
     tia_ok     = all_ind.get('tia', {}).get('ok')
@@ -446,7 +462,7 @@ def run_pipeline(image_path):
     # Step 5
     overlay = step5_overlay(image_path, lm, h, w, all_ind, early_stop)
 
-    return cnn, all_ind, overlay, early_stop
+    return mlp_res, all_ind, overlay, early_stop
 
 
 # =====================================================================
