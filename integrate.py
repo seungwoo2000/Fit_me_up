@@ -206,30 +206,12 @@ def step2_mlp_cva_tia(image_path):
     cva = res.get('CVA')
     tia = res.get('TIA')
 
-    # MLP label 기반 판정 (predict.py가 학습된 모델로 종합 판단)
-    mlp_label = res.get('label', 'bad')   # "good" or "bad"
-    mlp_good  = (mlp_label == 'good')
-
     all_ind = {}
 
-    # CVA/TIA ok 여부 → MLP 판정 기준
-    # 둘 다 Good이면 모델이 Good → 둘 다 ok=True
-    # Bad이면 각 각도 임계값으로 어느 쪽이 문제인지 구분
-    cva_bad_thresh = cva is not None and cva > THRESHOLD_CVA
-    tia_bad_thresh = tia is not None and tia > THRESHOLD_TIA
-
-    if mlp_good:
-        # MLP가 Good → CVA/TIA 모두 Good
-        cva_ok = True
-        tia_ok = True
-    else:
-        # MLP가 Bad → 각도 임계값으로 어느 쪽이 Bad인지 구분
-        cva_ok = not cva_bad_thresh
-        tia_ok = not tia_bad_thresh
-        # 둘 다 임계값 안이지만 MLP가 Bad인 경우 → 둘 다 Bad 처리
-        if cva_ok and tia_ok:
-            cva_ok = False
-            tia_ok = False
+    # CVA/TIA 판정: MLP label 기준으로만
+    mlp_good = (res.get('label', 'bad') == 'good')
+    cva_ok   = mlp_good
+    tia_ok   = mlp_good
 
     sh_idx_cva = best_idx(lm, 11, 12)
     sh_idx2, hp_idx = best_pair(lm, 11, 12, 23, 24)
@@ -363,264 +345,271 @@ def step4_remaining(lm, h, w, bboxes, img_w, img_h):
 # =====================================================================
 # Step 5. 오버레이 시각화
 # =====================================================================
-def _draw_joint(img, pt_px, ok, num=None):
-    """관절 점만 (번호 없음, 크기 2/3)"""
-    color = COLOR_GOOD if ok else COLOR_BAD
-    cv2.circle(img, pt_px, 7, color,        -1)
-    cv2.circle(img, pt_px, 9, (255,255,255), 2)
-
-
-def _draw_bad_arrow(img, joint_pt, ref_pt):
-    """Bad 관절: 목표 초록 점 + 굵은 화살표"""
-    tgt = target_pt(joint_pt, ref_pt)
-    # 화살표 굵게
-    cv2.arrowedLine(img, joint_pt, tgt, (255,255,255), 4, tipLength=0.3, line_type=cv2.LINE_AA)
-    cv2.arrowedLine(img, joint_pt, tgt, COLOR_TARGET,  2, tipLength=0.3, line_type=cv2.LINE_AA)
-    # 목표 초록 점 크게
-    cv2.circle(img, tgt, 9,  COLOR_TARGET,   -1)
-    cv2.circle(img, tgt, 11, (255,255,255),   2)
-
-
 def step5_overlay(image_path, lm, h, w, all_ind, early_stop, bboxes=None):
+    """
+    오버레이 규칙:
+    - CVA/TIA 하나라도 BAD  → 현재 척추선(빨강) + 목표 척추선(민트) + 화살표만
+    - CVA/TIA 모두 GOOD     → 현재 척추선(초록) + 6개 지표 현재 관절선
+                               (BAD 항목은 목표 위치 점선+링 추가, 측정불가 생략)
+    """
+    import math
     img = cv2.imread(image_path)
+    ih, iw = img.shape[:2]
 
     def pt(idx): return to_px(lm, idx, w, h)
 
-    # ── visibility 높은 쪽 선택 ──────────────────────────────────────
+    # ── 인덱스 ───────────────────────────────────────────────────────
     sh_idx, hp_idx = best_pair(lm, 11, 12, 23, 24)
-    sh2_idx        = 11 if sh_idx == 12 else 12   # 반대쪽 어깨
-    hp2_idx        = 23 if hp_idx == 24 else 24   # 반대쪽 골반
-    ear_idx        = best_idx(lm, 7, 8)   # 뼈대용
-    nose_idx       = 0                     # CVA 기준: 코(DA팀 기준)
-    el_idx         = best_idx(lm, 13, 14)
-    wr_idx         = best_idx(lm, 15, 16)
-    kn_idx         = best_idx(lm, 25, 26)
-    an_idx         = best_idx(lm, 27, 28)
+    nose_idx = 0
+    el_idx   = best_idx(lm, 13, 14)
+    wr_idx   = best_idx(lm, 15, 16)
+    fi_idx   = best_idx(lm, 17, 18)   # 소지MCP
+    kn_idx   = best_idx(lm, 25, 26)
+    an_idx   = best_idx(lm, 27, 28)
+    eye_idx  = best_idx(lm, 1, 4)
 
-    # ── 뼈대 연결선 ───────────────────────────────────────────────────
-    bones = [
-        (nose_idx, sh_idx),
-        (sh_idx,  hp_idx),
-        (sh_idx,  el_idx),
-        (el_idx,  wr_idx),
-        (hp_idx,  kn_idx),
-        (kn_idx,  an_idx),
-    ]
-    for a, b in bones:
-        if is_vis(lm, a) and is_vis(lm, b):
-            cv2.line(img, pt(a), pt(b), COLOR_BONE, 2, cv2.LINE_AA)
+    sh_mid = (int((pt(11)[0]+pt(12)[0])/2), int((pt(11)[1]+pt(12)[1])/2))
 
-    # ── 지표별 관절 포인트 정의 ───────────────────────────────────────
-    # CVA: 귀 + 어깨 (2개 점 + 연결선)
-    # TIA: 어깨 중점 + 골반 중점 (2개 점 + 연결선)
-    # 나머지: 핵심 관절 1~3개
+    # 촬영 방향: 코 x > 무릎 x → 오른쪽이 앞
+    forward = 1 if pt(nose_idx)[0] > pt(kn_idx)[0] else -1
 
-    sh_mid_pt = (
-        int((pt(11)[0]+pt(12)[0])/2),
-        int((pt(11)[1]+pt(12)[1])/2),
-    )
-    hp_mid_pt = (
-        int((pt(23)[0]+pt(24)[0])/2),
-        int((pt(23)[1]+pt(24)[1])/2),
-    )
+    # ── 드로잉 헬퍼 ──────────────────────────────────────────────────
+    def line(p1, p2, color, t=2):
+        """실선 (흰 외곽 + 컬러)"""
+        cv2.line(img, p1, p2, (255,255,255), t+2, cv2.LINE_AA)
+        cv2.line(img, p1, p2, color, t, cv2.LINE_AA)
 
-    # {key: (관절 포인트 리스트, 대표 포인트, ref 포인트)}
-    # TIA 목표: 어깨가 골반 바로 위 수직 (어깨→골반 수직)
-    hp_x_ref   = pt(hp_idx)[0]
-    tia_target = (hp_x_ref, sh_mid_pt[1])       # 어깨 목표: 골반 x, 어깨 y
-    # CVA 목표: 코가 어깨 바로 위 수직 (코→어깨 수직, DA팀 기준)
-    # TIA Bad면 어깨 목표 x 기준, TIA Good이면 현재 어깨 x 기준
-    sh_x_ref   = pt(sh_idx)[0]
-    cva_target = (sh_x_ref, pt(nose_idx)[1])    # 코 목표: 현재 어깨 x, 코 y
+    def dot(p, color, r=8):
+        """채워진 원 — 현재 관절"""
+        cv2.circle(img, p, r,   color,        -1)
+        cv2.circle(img, p, r+2, (255,255,255), 2)
 
-    JOINT_DEF = {
-        'cva': {
-            'pts':   [pt(nose_idx), pt(sh_idx)],
-            'main':  pt(nose_idx),
-            'ref':   cva_target,
-            'line':  True,
-        },
-        'tia': {
-            'pts':   [sh_mid_pt, hp_mid_pt],
-            'main':  sh_mid_pt,
-            'ref':   tia_target,
-            'line':  True,
-        },
-        'elbow': {
-            'pts':   [pt(el_idx)],
-            'main':  pt(el_idx),
-            'ref':   pt(sh_idx),
-            'line':  False,
-        },
-        'knee': {
-            'pts':   [pt(kn_idx)],
-            'main':  pt(kn_idx),
-            'ref':   pt(hp_idx),
-            'line':  False,
-        },
-        'wrist': {
-            'pts':   [pt(wr_idx)],
-            'main':  pt(wr_idx),
-            'ref':   pt(el_idx),
-            'line':  False,
-        },
-        'gaze': {
-            'pts':   [pt(nose_idx)],
-            'main':  pt(nose_idx),
-            'ref':   (pt(nose_idx)[0], pt(nose_idx)[1]-OFFSET_PX),
-            'line':  False,
-        },
-        'desk_h': {
-            'pts':   [pt(el_idx)],
-            'main':  pt(el_idx),
-            'ref':   (pt(el_idx)[0], pt(el_idx)[1]-OFFSET_PX),
-            'line':  False,
-        },
-        'chair_d': {
-            'pts':   [pt(hp_idx)],
-            'main':  pt(hp_idx),
-            'ref':   (pt(hp_idx)[0]+OFFSET_PX, pt(hp_idx)[1]),
-            'line':  False,
-        },
-    }
+    def goal_ring(p, r=10):
+        """속 빈 링 — 목표 위치 (하늘색)"""
+        GOAL = (200, 220, 255)
+        cv2.circle(img, p, r,   (255,255,255), -1)
+        cv2.circle(img, p, r,   GOAL,           3)
+        cv2.circle(img, p, r+3, (50, 50, 50),   1)
 
-    keys = ['cva','tia'] if early_stop else list(JOINT_DEF.keys())
+    def dashed(p1, p2):
+        """점선 — 현재→목표 연결 (하늘색)"""
+        GOAL = (200, 220, 255)
+        dist = math.hypot(p2[0]-p1[0], p2[1]-p1[1])
+        if dist < 2: return
+        steps = max(int(dist/10), 1)
+        for i in range(steps):
+            if i % 2 == 0:
+                t1=i/steps; t2=min((i+0.9)/steps, 1.0)
+                x1=int(p1[0]+(p2[0]-p1[0])*t1); y1=int(p1[1]+(p2[1]-p1[1])*t1)
+                x2=int(p1[0]+(p2[0]-p1[0])*t2); y2=int(p1[1]+(p2[1]-p1[1])*t2)
+                cv2.line(img,(x1,y1),(x2,y2),(255,255,255),2,cv2.LINE_AA)
+                cv2.line(img,(x1,y1),(x2,y2),GOAL,1,cv2.LINE_AA)
 
-    # ── CVA/TIA: MLP 각도값 기반 현재 자세 + 목표 자세 표시 ──────────
+    def badge(p, num, color):
+        """번호 뱃지"""
+        bx, by = p[0]-14, p[1]-14
+        cv2.circle(img,(bx,by), 9, (255,255,255), -1)
+        cv2.circle(img,(bx,by), 10, color, 2)
+        cv2.putText(img, str(num),
+                    (bx-4 if num<10 else bx-6, by+4),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.35, (20,20,20), 1, cv2.LINE_AA)
+
+    def arrow(src, dst, color):
+        """화살표"""
+        cv2.arrowedLine(img,src,dst,(255,255,255),4,tipLength=0.2,line_type=cv2.LINE_AA)
+        cv2.arrowedLine(img,src,dst,color,2,tipLength=0.2,line_type=cv2.LINE_AA)
+
+    def spine(pts, color, t=3):
+        """척추선: 실선 + 중간점 + 끝점"""
+        for i in range(len(pts)-1):
+            cv2.line(img,pts[i],pts[i+1],(255,255,255),t+2,cv2.LINE_AA)
+            cv2.line(img,pts[i],pts[i+1],color,t,cv2.LINE_AA)
+        for i in range(len(pts)-1):
+            p1,p2=pts[i],pts[i+1]
+            for tf in [0.25,0.5,0.75]:
+                mx=int(p1[0]+(p2[0]-p1[0])*tf); my=int(p1[1]+(p2[1]-p1[1])*tf)
+                cv2.circle(img,(mx,my),4,color,-1)
+                cv2.circle(img,(mx,my),6,(255,255,255),1)
+        for p in pts:
+            dot(p, color, 7)
+
+    def inner_angle(a, b, c):
+        """b를 꼭짓점으로 한 내각 (도)"""
+        v1=(a[0]-b[0],a[1]-b[1]); v2=(c[0]-b[0],c[1]-b[1])
+        cos_a=(v1[0]*v2[0]+v1[1]*v2[1])/(math.hypot(*v1)*math.hypot(*v2)+1e-8)
+        return math.degrees(math.acos(max(-1.0, min(1.0, cos_a))))
+
+    def goal_end_pt(anchor, end_pt, cur_ang, goal_ang):
+        """
+        anchor 고정, end_pt를 goal_ang 내각 위치로 회전 이동
+        이미지 좌표계(y↓) + 촬영 방향(forward) 고려
+        """
+        dx=end_pt[0]-anchor[0]; dy=end_pt[1]-anchor[1]
+        dist=math.hypot(dx,dy)
+        if dist < 1: return end_pt
+        delta = math.radians(goal_ang - cur_ang) * forward * -1
+        c,s = math.cos(delta), math.sin(delta)
+        ndx=dx*c-dy*s; ndy=dx*s+dy*c
+        return (int(anchor[0]+ndx), int(anchor[1]+ndy))
+
+    # ── CVA/TIA 상태 확인 ────────────────────────────────────────────
     cva_ok    = all_ind.get('cva', {}).get('ok')
     tia_ok    = all_ind.get('tia', {}).get('ok')
-    cva_val   = all_ind.get('cva', {}).get('value')  # MLP가 계산한 실제 각도
-    tia_val   = all_ind.get('tia', {}).get('value')
     angle_bad = (cva_ok is False) or (tia_ok is False)
 
-    hp_pt   = pt(hp_idx)    # 골반 (기준, 고정)
-    sh_pt   = sh_mid_pt     # 어깨 (현재 MLP 기반)
-    nose_pt = pt(nose_idx)  # 코 (현재 MLP 기반)
+    hp_pt   = pt(hp_idx)
+    sh_pt   = sh_mid
+    nose_pt = pt(nose_idx)
 
-    def draw_spine_line(pts, color, thickness=2):
-        for i in range(len(pts)-1):
-            cv2.line(img, pts[i], pts[i+1], (255,255,255), thickness+2, cv2.LINE_AA)
-            cv2.line(img, pts[i], pts[i+1], color, thickness, cv2.LINE_AA)
-        for i in range(len(pts)-1):
-            p1, p2 = pts[i], pts[i+1]
-            for t in [0.25, 0.5, 0.75]:
-                mx = int(p1[0]+(p2[0]-p1[0])*t)
-                my = int(p1[1]+(p2[1]-p1[1])*t)
-                cv2.circle(img, (mx,my), 4, color,        -1)
-                cv2.circle(img, (mx,my), 6, (255,255,255), 1)
-        for p in pts:
-            cv2.circle(img, p, 7, color,        -1)
-            cv2.circle(img, p, 9, (255,255,255), 2)
-
-    def draw_arrow(src, dst, color):
-        cv2.arrowedLine(img, src, dst, (255,255,255), 4, tipLength=0.25, line_type=cv2.LINE_AA)
-        cv2.arrowedLine(img, src, dst, color,         2, tipLength=0.25, line_type=cv2.LINE_AA)
-
-    # ── 현재 자세: MLP 각도값 그대로 점 찍기 ─────────────────────────
+    # ── 현재 척추선 (CVA/TIA BAD=빨강, GOOD=초록) ────────────────────
     cur_color = COLOR_BAD if angle_bad else COLOR_GOOD
-    draw_spine_line([hp_pt, sh_pt, nose_pt], cur_color)
+    spine([hp_pt, sh_pt, nose_pt], cur_color)
 
-    # ── 목표 자세: Bad일 때만 표시 ───────────────────────────────────
+    # ── CVA/TIA BAD: 목표 척추선 + 화살표 후 종료 ────────────────────
     if angle_bad:
-        import math
+        sh_hp_d   = math.hypot(sh_pt[0]-hp_pt[0], sh_pt[1]-hp_pt[1])
+        nose_sh_d = math.hypot(nose_pt[0]-sh_pt[0], nose_pt[1]-sh_pt[1])
 
-        # 어깨-골반 거리 (TIA 목표 거리 기준)
-        sh_hp_dist = math.hypot(sh_pt[0]-hp_pt[0], sh_pt[1]-hp_pt[1])
-        # 코-어깨 거리 (CVA 목표 거리 기준)
-        nose_sh_dist = math.hypot(nose_pt[0]-sh_pt[0], nose_pt[1]-sh_pt[1])
-
-        # TIA 목표: Good 중앙값 5° 기울어진 위치
-        # 측면 사진에서 앞으로 기울어짐 → x는 골반보다 앞(작은 x)으로
-        tia_goal_deg = math.radians(5)
+        # TIA 목표: Good 중앙값 5° (어깨가 골반보다 forward 방향으로 5°)
+        sh_tgt = sh_pt
         if tia_ok is False:
-            dx = -int(sh_hp_dist * math.sin(tia_goal_deg))  # 앞쪽으로
-            dy = -int(sh_hp_dist * math.cos(tia_goal_deg))  # 위쪽으로
-            sh_tgt = (hp_pt[0] + dx, hp_pt[1] + dy)
-        else:
-            sh_tgt = sh_pt
+            dx = int(forward * sh_hp_d * math.sin(math.radians(5)))
+            dy = -int(sh_hp_d * math.cos(math.radians(5)))
+            sh_tgt = (hp_pt[0]+dx, hp_pt[1]+dy)
 
-        # CVA 목표: Good 중앙값 10° 기울어진 위치
-        # 코는 어깨보다 앞으로 나와있는 게 정상
-        cva_goal_deg = math.radians(10)
+        # CVA 목표: Good 중앙값 10° (코가 어깨보다 forward 방향으로 10°)
+        nose_tgt = nose_pt
         if cva_ok is False:
-            dx = -int(nose_sh_dist * math.sin(cva_goal_deg))
-            dy = -int(nose_sh_dist * math.cos(cva_goal_deg))
-            nose_tgt = (sh_tgt[0] + dx, sh_tgt[1] + dy)
-        else:
-            nose_tgt = nose_pt
+            dx = int(forward * nose_sh_d * math.sin(math.radians(10)))
+            dy = -int(nose_sh_d * math.cos(math.radians(10)))
+            nose_tgt = (sh_tgt[0]+dx, sh_tgt[1]+dy)
 
-        # 목표 자세 연결선 + 점
-        draw_spine_line([hp_pt, sh_tgt, nose_tgt], COLOR_TARGET)
+        spine([hp_pt, sh_tgt, nose_tgt], COLOR_TARGET)
 
-        # 화살표: Bad인 지표만
         if tia_ok is False and sh_tgt != sh_pt:
-            draw_arrow(sh_pt, sh_tgt, COLOR_TARGET)
+            arrow(sh_pt, sh_tgt, COLOR_TARGET)
         if cva_ok is False and nose_tgt != nose_pt:
-            draw_arrow(nose_pt, nose_tgt, COLOR_TARGET)
+            arrow(nose_pt, nose_tgt, COLOR_TARGET)
 
-    # ── 나머지 6개 지표: 번호 뱃지 + 라벨 + 점 ─────────────────────────
-    SIX_LABELS = {
-        'elbow':   'Elbow',  'knee':    'Knee',
-        'wrist':   'Wrist',  'gaze':    'Gaze',
-        'desk_h':  'Desk',   'chair_d': 'Chair',
-    }
+        return img   # ← 6개 지표 표시 안 함
+
+    # ── CVA/TIA 모두 GOOD: 6개 지표 표시 ─────────────────────────────
     KEY_ORDER = ['cva','tia','elbow','knee','wrist','gaze','desk_h','chair_d']
-    for key in keys:
-        if key in ('cva', 'tia'): continue
-        num   = KEY_ORDER.index(key) + 1
-        info  = all_ind.get(key)
-        label = SIX_LABELS.get(key, key)
+
+    for key in ['elbow','knee','wrist','gaze','desk_h','chair_d']:
+        info = all_ind.get(key)
         if not info: continue
         ok = info.get('ok')
+        if ok is None: continue   # 측정불가 → 자동 제외
 
-        defn    = JOINT_DEF[key]
-        main_pt = defn['main']
-        ref_pt  = defn['ref']
+        num   = KEY_ORDER.index(key) + 1
+        color = COLOR_GOOD if ok else COLOR_BAD
 
-        if ok is None:
-            # 측정불가: 회색 점 + 라벨
-            color = COLOR_NA
-            cv2.circle(img, main_pt, 8,  color,         -1)
-            cv2.circle(img, main_pt, 10, (255,255,255),  1)
-            cv2.putText(img, f"{num}.{label}?",
-                        (main_pt[0]+12, main_pt[1]+4),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1, cv2.LINE_AA)
-        else:
-            color = COLOR_GOOD if ok else COLOR_BAD
+        # ── 3. 팔꿈치: 어깨-팔꿈치-손목 내각 90~120° (목표 105°) ────
+        if key == 'elbow':
+            i1,i2,i3 = info.get('joints', (sh_idx,el_idx,wr_idx))
+            # 현재 관절선
+            for a,b in [(i1,i2),(i2,i3)]:
+                if is_vis(lm,a) and is_vis(lm,b): line(pt(a),pt(b),color)
+            for i in [i1,i2,i3]:
+                if is_vis(lm,i): dot(pt(i),color)
+            main_pt = pt(i2)
+            # BAD: 목표 위치 (팔꿈치 고정, 손목을 105° 위치로)
+            if not ok and all(is_vis(lm,i) for i in [i1,i2,i3]):
+                cur    = inner_angle(pt(i1),pt(i2),pt(i3))
+                wr_tgt = goal_end_pt(pt(i2),pt(i3),cur,105.0)
+                line(pt(i1),pt(i2),(200,220,255),1)  # 어깨→팔꿈치 목표선
+                dashed(pt(i2),wr_tgt)                # 팔꿈치→손목 점선
+                goal_ring(pt(i2),7)                  # 팔꿈치 기준 링
+                goal_ring(wr_tgt)                    # 손목 목표 링
 
-            # 관절 점 (크게)
-            cv2.circle(img, main_pt, 10, color,         -1)
-            cv2.circle(img, main_pt, 12, (255,255,255),  2)
+        # ── 4. 무릎: 골반-무릎-발목 내각 85~100° (목표 92.5°) ────────
+        elif key == 'knee':
+            i1,i2,i3 = info.get('joints', (hp_idx,kn_idx,an_idx))
+            for a,b in [(i1,i2),(i2,i3)]:
+                if is_vis(lm,a) and is_vis(lm,b): line(pt(a),pt(b),color)
+            for i in [i1,i2,i3]:
+                if is_vis(lm,i): dot(pt(i),color)
+            main_pt = pt(i2)
+            if not ok and all(is_vis(lm,i) for i in [i1,i2,i3]):
+                cur    = inner_angle(pt(i1),pt(i2),pt(i3))
+                an_tgt = goal_end_pt(pt(i2),pt(i3),cur,92.5)
+                line(pt(i1),pt(i2),(200,220,255),1)
+                dashed(pt(i2),an_tgt)
+                goal_ring(pt(i2),7)
+                goal_ring(an_tgt)
 
-            # 번호 뱃지
-            num_pt = (main_pt[0] - 15, main_pt[1] - 15)
-            cv2.circle(img, num_pt, 9,  (255,255,255),  -1)
-            cv2.circle(img, num_pt, 10, color,            2)
-            cv2.putText(img, str(num),
-                        (num_pt[0]-4 if num<10 else num_pt[0]-6, num_pt[1]+4),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.35, (20,20,20), 1, cv2.LINE_AA)
+        # ── 5. 손목: 편차 ≤15° (목표=일직선 0°) ─────────────────────
+        # 팔꿈치→손목 방향 연장선 위에 손가락 목표 위치
+        elif key == 'wrist':
+            i1,i2,i3 = info.get('joints', (el_idx,wr_idx,fi_idx))
+            for a,b in [(i1,i2),(i2,i3)]:
+                if is_vis(lm,a) and is_vis(lm,b): line(pt(a),pt(b),color)
+            for i in [i1,i2,i3]:
+                if is_vis(lm,i): dot(pt(i),color)
+            main_pt = pt(i2)
+            if not ok and all(is_vis(lm,i) for i in [i1,i2,i3]):
+                dx=pt(i2)[0]-pt(i1)[0]; dy=pt(i2)[1]-pt(i1)[1]
+                d=math.hypot(dx,dy)+1e-8
+                fi_d=math.hypot(pt(i3)[0]-pt(i2)[0],pt(i3)[1]-pt(i2)[1])
+                fi_tgt=(int(pt(i2)[0]+dx/d*fi_d),int(pt(i2)[1]+dy/d*fi_d))
+                dashed(pt(i3),fi_tgt)   # 현재 손가락 → 목표 손가락
+                goal_ring(pt(i2),7)     # 손목 기준 링
+                goal_ring(fi_tgt)       # 손가락 목표 링
 
-            # 라벨 텍스트
-            lbl_x, lbl_y = main_pt[0]+14, main_pt[1]+5
-            cv2.putText(img, label,
-                        (lbl_x, lbl_y),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.42,
-                        (255,255,255), 3, cv2.LINE_AA)  # 흰 테두리
-            cv2.putText(img, label,
-                        (lbl_x, lbl_y),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.42,
-                        color, 1, cv2.LINE_AA)
-
+        # ── 6. 시선각: 하방 10~15° (목표 12.5°) ─────────────────────
+        elif key == 'gaze':
+            e = info.get('joints', (eye_idx,))[0]
+            if not is_vis(lm,e): continue
+            main_pt = pt(e)
+            dot(main_pt, color)
             if not ok:
-                _draw_bad_arrow(img, main_pt, ref_pt)
+                g   = math.radians(12.5)
+                tgt = (main_pt[0]+int(forward*80*math.cos(g)),
+                       main_pt[1]+int(80*math.sin(g)))
+                dashed(main_pt, tgt)
+                goal_ring(tgt)
 
+        # ── 7. 작업대 높이: 팔꿈치 y = 책상 y (±10%) ────────────────
+        elif key == 'desk_h':
+            e2 = info.get('joints', (el_idx,))[0]
+            if not is_vis(lm,e2): continue
+            main_pt = pt(e2)
+            dot(main_pt, color)
+            if not ok:
+                if bboxes and bboxes.get('desk'):
+                    desk_y = int(bboxes['desk']['y_min'])
+                    tgt    = (main_pt[0], desk_y)
+                else:
+                    tgt = (main_pt[0], main_pt[1]-40)
+                dashed(main_pt, tgt)
+                goal_ring(tgt)
+
+        # ── 8. 등받이: 골반→등받이 방향 중간값 ──────────────────────
+        elif key == 'chair_d':
+            h2 = info.get('joints', (hp_idx,))[0]
+            if not is_vis(lm,h2): continue
+            main_pt = pt(h2)
+            dot(main_pt, color)
+            if not ok:
+                if bboxes and bboxes.get('chair'):
+                    kn_x_pos = pt(kn_idx)[0]
+                    hp_x_pos = main_pt[0]
+                    chair_x  = int(bboxes['chair']['x_min']) if kn_x_pos > hp_x_pos                                else int(bboxes['chair']['x_max'])
+                    tgt = (int((main_pt[0]+chair_x)/2), main_pt[1])
+                else:
+                    back = -1 if pt(kn_idx)[0] > main_pt[0] else 1
+                    tgt  = (main_pt[0]+back*50, main_pt[1])
+                dashed(main_pt, tgt)
+                goal_ring(tgt)
+        else:
+            continue
+
+        badge(main_pt, num, color)
 
     return img
 
 
-# =====================================================================
-# 전체 파이프라인
-# =====================================================================
 def run_pipeline(image_path):
     img_cv       = cv2.imread(image_path)
     img_h, img_w = img_cv.shape[:2]
@@ -657,7 +646,7 @@ def run_pipeline(image_path):
 class IntegrateApp:
     def __init__(self, root):
         self.root       = root
-        self.root.title("Fit me up | 자세 통합 분석")
+        self.root.title("Fit me up | 자세&환경 통합 분석")
         self.root.geometry("1200x820")
         self.root.configure(bg="#f4f4f4")
         self.image_path = None
@@ -665,7 +654,7 @@ class IntegrateApp:
         self._setup_ui()
 
     def _setup_ui(self):
-        tk.Label(self.root, text="🧘 Fit me up  |  자세 통합 분석",
+        tk.Label(self.root, text="🧘 Fit me up  |  자세&환경 통합 분석",
                  font=("Malgun Gothic", 19, "bold"),
                  bg="#1e1e2e", fg="white", pady=10
         ).pack(fill=tk.X)
