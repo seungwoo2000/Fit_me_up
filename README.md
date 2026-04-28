@@ -47,7 +47,8 @@ Fit_me_up/
 │   ├── train_ankle_visible.py        # ankle_visible 단독 학습
 │   ├── train_combined.py             # 통합 학습 (권장)
 │   ├── run_all.py                    # 3가지 전략 자동 실행 & 비교표 출력
-│   └── yolov8n.pt                    # YOLOv8 사전학습 가중치
+│   ├── yolo_test.py                  # YOLO 추론 테스트 UI
+│   └── yolov8n.pt                    # YOLOv8 사전학습 가중치 (gitignore)
 │
 └── integrate/                        # 통합 파이프라인 (추후 작성)
     └── (작성 예정)
@@ -126,14 +127,21 @@ python train_combined.py
 
 학습 완료 후 `YOLO/fit_me_up/combined_gpu/weights/best.pt` 생성됨
 
-### 3. MediaPipe 테스트
+### 3. YOLO 추론 테스트
+
+```bash
+cd YOLO
+python yolo_test.py
+```
+
+### 4. MediaPipe 테스트
 
 ```bash
 cd MediaPipe/code
 python posture_test.py
 ```
 
-### 4. CNN 추론 (단독 실행)
+### 5. CNN 추론 (단독 실행)
 
 ```bash
 cd MediaPipe/code
@@ -168,7 +176,7 @@ python predict.py <이미지경로>
 
 ## TODO
 
-- [ ] YOLO 학습 완료 → `best.pt` 생성
+- [x] YOLO 학습 완료 → `best.pt` 생성
 - [ ] MediaPipe 모듈 완성
 - [ ] YOLO + MediaPipe + CNN 통합 파이프라인 작성 (`integrate/`)
 - [ ] RULA + VDT 고시 기반 점수 계산 구현
