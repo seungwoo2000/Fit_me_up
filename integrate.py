@@ -1,624 +1,724 @@
-import cv2
+# =====================================================================
+# integrate.py | CNN + MediaPipe + YOLO 통합 파이프라인 UI
+# 자세기준서 v1.0 기반 8개 지표 판정 + 오버레이 시각화
+# 측면 이미지 기준 visibility 높은 쪽 자동 선택
+# 실행: python integrate.py
+# =====================================================================
+import os, sys, cv2, warnings
 import numpy as np
-import os
-import sys
-import warnings
-import mediapipe as mp
-from ultralytics import YOLO
-from PIL import ImageFont, ImageDraw, Image
-import datetime
-import math
-
-sys.path.append(r"E:\python\FIT_ME_UP\MediaPipe\code")
-from predict import predict_posture
+import tkinter as tk
+from tkinter import filedialog, messagebox
+from PIL import Image, ImageTk
 
 warnings.filterwarnings('ignore')
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
-# ── 경로 ──────────────────────────────────────────────────
-YOLO_MODEL    = r"E:\python\FIT_ME_UP\YOLO\fit_me_up\combined_gpu\weights\best.pt"
-IMAGE_PATH    = r"E:\python\FIT_ME_UP\test (3).jpg"
-MODEL_PATH_MP = r"E:\python\FIT_ME_UP\MediaPipe\models\pose_landmarker.task"
-LOGO_PATH     = r"E:\python\FIT_ME_UP\logo.png"
-FONT_BOLD     = r"E:\python\FIT_ME_UP\Fonts\malgunbd.ttf"
-FONT_REG      = r"E:\python\FIT_ME_UP\Fonts\malgun.ttf"
+# ── 경로 설정 ─────────────────────────────────────────────────────────
+BASE       = os.path.dirname(os.path.abspath(__file__))
+MP_MODEL   = os.path.join(BASE, 'MediaPipe', 'models', 'pose_landmarker.task')
+YOLO_MODEL = os.path.join(BASE, 'YOLO', 'fit_me_up', 'combined_gpu', 'weights', 'best.pt')
 
-# ── 출력 해상도 ────────────────────────────────────────────
-TW, TH = 2560, 1440
-IW     = 1200   # 이미지 영역
-PW     = TW-IW  # 패널 영역 1360px
+# ── 자세기준서 임계값 ─────────────────────────────────────────────────
+THRESHOLD_CNN   = 0.60
+THRESHOLD_CVA   = 20.0
+THRESHOLD_TIA   = 10.0
+RANGE_ELBOW     = (90, 120)
+RANGE_KNEE      = (85, 100)
+THRESHOLD_WRIST = 15.0
+RANGE_GAZE      = (10, 15)
+THRESHOLD_DESK  = 0.10
+THRESHOLD_CHAIR = 0.20
+VISIBILITY_MIN  = 0.40
 
-# ── 폰트 ──────────────────────────────────────────────────
-FP  = FONT_BOLD
-FPR = FONT_REG
-F10 = ImageFont.truetype(FPR, 13)
-F12 = ImageFont.truetype(FPR, 15)
-F14 = ImageFont.truetype(FPR, 17)
-F16 = ImageFont.truetype(FP,  19)
-F18 = ImageFont.truetype(FP,  21)
-F22 = ImageFont.truetype(FP,  26)
-F26 = ImageFont.truetype(FP,  30)
-F32 = ImageFont.truetype(FP,  36)
-F40 = ImageFont.truetype(FP,  44)
+# ── 오버레이 색상 (BGR) ───────────────────────────────────────────────
+COLOR_GOOD      = (0, 158, 29)     # 초록
+COLOR_BAD       = (50,  50, 226)   # 빨강
+COLOR_TARGET    = (0, 200, 100)    # 목표 초록
+COLOR_BONE      = (200, 200, 200)  # 뼈대 연결선
+COLOR_HUD_BG    = (20,  15,  40)   # HUD 배경
+OFFSET_PX       = 32
 
-# ── 컬러 ──────────────────────────────────────────────────
-C = {
-    'base':    (7,   12,  26),
-    'panel':   (11,  19,  42),
-    'card':    (17,  29,  58),
-    'card2':   (22,  38,  72),
-    'header':  (9,   16,  36),
-    'tw':      (230, 238, 255),
-    'tg':      (130, 150, 190),
-    'td':      (65,  80,  120),
-    'brand':   (0,   215, 190),
-    'brand2':  (0,   155, 255),
-    'good':    (42,  215, 130),
-    'bad':     (255, 65,  65),
-    'ideal':   (255, 215, 0),
-    'range':   (0,   160, 255),
-    'blue':    (35,  105, 235),
-    'skel':    (0,   215, 190),
-    'chair':   (255, 150, 40),
-    'desk':    (40,  205, 255),
-    'monitor': (185, 70,  255),
-}
+# ── YOLO 클래스 ───────────────────────────────────────────────────────
+YOLO_CLASSES = {0: 'chair', 1: 'desk', 2: 'monitor'}
 
-CLASS_NAMES = {0:'chair', 1:'desk', 2:'monitor'}
-
+# ── 피드백 메시지 ─────────────────────────────────────────────────────
 FEEDBACK = {
-    'CVA': {
-        'no':'01','label':'목굴곡각','eng':'CVA','range':'0° ~ 20°','cat':'posture',
-        'good':'머리·경추 수직 정렬 유지\n경추 부담 최소화 상태',
-        'bad': '전방두부자세(FHP) 의심\n모니터를 눈높이로 올리세요\n1시간마다 목 스트레칭 시행'
-    },
-    'TIA': {
-        'no':'02','label':'몸통굴곡각','eng':'TIA','range':'0° ~ 10°','cat':'posture',
-        'good':'척추 수직 정렬 양호\n요추 압박 최소화 상태',
-        'bad': '과도한 몸통 전굴 감지\n등받이에 허리 완전 밀착\n의자 깊숙이 앉으세요'
-    },
-    '팔꿈치': {
-        'no':'03','label':'팔꿈치 각도','eng':'Elbow','range':'90° ~ 120°','cat':'posture',
-        'good':'상지 관절 부하 최적 범위\nVDT 고시 제6조 2항 충족',
-        'bad': '팔꿈치 각도 기준 이탈\n의자 높이 조정 필요\n팔꿈치·책상면 수평 유지'
-    },
-    '무릎': {
-        'no':'04','label':'무릎 각도','eng':'Knee','range':'85° ~ 100°','cat':'posture',
-        'good':'하지 혈액순환 원활\nVDT 고시 제6조 6항 충족',
-        'bad': '무릎 각도 기준 이탈\n의자 높이 조절 필요\n발받침대 사용 권장'
-    },
-    '손목': {
-        'no':'05','label':'손목 각도','eng':'Wrist','range':'±15° 이내','cat':'posture',
-        'good':'손목 중립 자세 유지\nCTS 위험 최소화 상태',
-        'bad': '손목 과굴곡 감지\n손목 받침대 설치 필요\n키보드 앞 15cm 확보'
-    },
-    '시선각': {
-        'no':'06','label':'모니터 시선각','eng':'Gaze','range':'하방 10°~15°','cat':'env',
-        'good':'시선각 VDT 기준 충족\n경추 부담 최소화',
-        'bad': '시선각 기준 이탈\n모니터 상단 눈높이 맞춤\n화면 거리 40cm 이상'
-    },
-    '책상높이': {
-        'no':'07','label':'작업대 높이','eng':'Desk','range':'팔꿈치 수평 ±10%','cat':'env',
-        'good':'작업대·팔꿈치 정렬 양호\n상지 부담 최소화',
-        'bad': '작업대 높이 불일치\n책상 65cm 전후 조정\n의자 높이로 보정 가능'
-    },
-    '등받이': {
-        'no':'08','label':'의자 등받이','eng':'Chair','range':'골반너비 20% 이내','cat':'env',
-        'good':'등받이 지지 충분\n요추 안정성 확보',
-        'bad': '등받이 지지 부족\n의자 깊숙이 착석\n허리 완전 밀착 필요'
-    },
+    'cva':     {'range': '0 ~ 20°',
+                'good': '머리와 경추가 수직 정렬되어 경추 추간판 하중이 최소화된 상태입니다.',
+                'bad':  '모니터를 눈높이에 맞춰 올리고, 시선이 수평 하방 10~15° 범위에 오도록 조정하세요.',
+                'na':   '관절 가시성이 낮아 측정할 수 없습니다. 측면 이미지를 다시 촬영하세요.'},
+    'tia':     {'range': '0 ~ 10°',
+                'good': '몸통이 수직에 가깝게 유지되어 요추 압박이 최소화된 최적 자세입니다.',
+                'bad':  '의자 깊숙이 앉아 등받이에 허리를 완전히 기대세요. 요추 쿠션 사용을 권장합니다.',
+                'na':   '관절 가시성이 낮아 측정할 수 없습니다.'},
+    'elbow':   {'range': '90 ~ 120°',
+                'good': '윗팔이 자연스럽게 내려뜨려져 어깨·팔꿈치 관절 부하가 최적 범위입니다.',
+                'bad':  '의자 높이를 조정하여 팔꿈치가 책상면과 수평이 되도록 하세요.',
+                'na':   '팔꿈치 관절이 측면에서 가려져 측정할 수 없습니다.'},
+    'knee':    {'range': '85 ~ 100°',
+                'good': '무릎 내각이 VDT 고시 기준을 충족하며 하지 혈액순환이 원활합니다.',
+                'bad':  '의자 높이를 조절하여 무릎 내각이 90° 전후가 되도록 하세요. 발 받침대 사용을 권장합니다.',
+                'na':   '무릎 관절이 측면에서 가려져 측정할 수 없습니다.'},
+    'wrist':   {'range': '±15° 이내',
+                'good': '아래팔과 손이 중립 자세를 유지하여 손목건초염 위험이 최소화된 상태입니다.',
+                'bad':  '손목 받침대를 키보드 앞에 설치하고 키보드와 책상 사이 15cm 공간을 확보하세요.',
+                'na':   '손목 관절이 측면에서 가려져 측정할 수 없습니다.'},
+    'gaze':    {'range': '하방 10 ~ 15°',
+                'good': '모니터 시선각이 VDT 고시 기준에 적합하여 경추부 과부하가 없는 상태입니다.',
+                'bad':  '모니터 상단이 눈높이와 일치하도록 높이를 조정하세요 (VDT 고시 제6조 1항).',
+                'na':   '모니터가 탐지되지 않았습니다.'},
+    'desk_h':  {'range': '팔꿈치 기준 ±10%',
+                'good': '책상 높이가 팔꿈치와 수평 정렬되어 어깨 부하가 최소화된 상태입니다.',
+                'bad':  '팔꿈치 높이에 맞춰 65cm 전후로 조정하거나 의자 높이로 보정하세요.',
+                'na':   '책상이 탐지되지 않았습니다.'},
+    'chair_d': {'range': '골반너비 20% 이내',
+                'good': '등받이 지지가 충분하여 요추부터 어깨까지 편안하게 지지된 상태입니다.',
+                'bad':  '의자 깊숙이 앉아 등 전체가 등받이에 닿도록 하세요 (VDT 고시 제6조 4항).',
+                'na':   '의자가 탐지되지 않았습니다.'},
 }
 
-yolo = YOLO(YOLO_MODEL)
+INDICATOR_NAMES = {
+    'cva':     'CVA 목굴곡각',
+    'tia':     'TIA 몸통굴곡각',
+    'elbow':   '팔꿈치 각도',
+    'knee':    '무릎 각도',
+    'wrist':   '손목 편차',
+    'gaze':    '모니터 시선각',
+    'desk_h':  '작업대 높이',
+    'chair_d': '의자-등받이',
+}
 
-try:
-    mp_pose = mp.solutions.pose
-    pose    = mp_pose.Pose(static_image_mode=True, min_detection_confidence=0.5)
-    USE_LEGACY = True
-except AttributeError:
-    from mediapipe.tasks import python as mp_python
-    from mediapipe.tasks.python import vision
-    USE_LEGACY = False
-    base_options = mp_python.BaseOptions(model_asset_path=MODEL_PATH_MP)
-    options = vision.PoseLandmarkerOptions(
-        base_options=base_options,
-        running_mode=vision.RunningMode.IMAGE,
-        num_poses=1, min_pose_detection_confidence=0.5
-    )
-    pose = vision.PoseLandmarker.create_from_options(options)
+IND_UNITS = {
+    'cva':'°', 'tia':'°', 'elbow':'°',
+    'knee':'°', 'wrist':'°', 'gaze':'°',
+    'desk_h':'', 'chair_d':''
+}
 
-def calc_angle(A,B,C_):
-    v1 = np.array(A)-np.array(B)
-    v2 = np.array(C_)-np.array(B)
-    ct = np.dot(v1,v2)/(np.linalg.norm(v1)*np.linalg.norm(v2)+1e-8)
-    return np.degrees(np.arccos(np.clip(ct,-1,1)))
 
-def calc_vert(A,B):
-    v=(B[0]-A[0],B[1]-A[1])
-    return np.degrees(np.arctan2(abs(v[0]),abs(v[1])))
+# =====================================================================
+# 유틸
+# =====================================================================
+def get_vis(lm, idx):
+    return lm[idx].visibility if hasattr(lm[idx], 'visibility') else 0.0
 
-def calc_gaze(eye,mc):
-    return np.degrees(np.arctan2(mc[1]-eye[1],mc[0]-eye[0]))
+def is_vis(lm, idx):
+    return get_vis(lm, idx) >= VISIBILITY_MIN
 
-def judge(v,mn,mx):
-    return 'Good' if mn<=v<=mx else 'Bad'
+def best_idx(lm, left, right):
+    """좌/우 중 visibility 높은 랜드마크 인덱스 반환"""
+    return left if get_vis(lm, left) >= get_vis(lm, right) else right
 
-# ── 측면 스켈레톤 (우측만) ────────────────────────────────
-def draw_skeleton(img, lm, h, w):
-    conns = [
-        (8, 12),   # 귀 → 어깨
-        (12, 14),  # 어깨 → 팔꿈치
-        (14, 16),  # 팔꿈치 → 손목
-        (16, 20),  # 손목 → 손가락
-        (12, 24),  # 어깨 → 골반
-        (24, 26),  # 골반 → 무릎
-        (26, 28),  # 무릎 → 발목
-    ]
-    sc  = C['skel']
-    col = (sc[2], sc[1], sc[0])
+def best_pair(lm, left1, right1, left2, right2):
+    """두 쌍 중 visibility 합이 높은 쪽 (idx1, idx2) 반환"""
+    l_score = get_vis(lm, left1)  + get_vis(lm, left2)
+    r_score = get_vis(lm, right1) + get_vis(lm, right2)
+    return (left1, left2) if l_score >= r_score else (right1, right2)
 
-    for a, b in conns:
-        ax,ay = int(lm[a].x*w), int(lm[a].y*h)
-        bx,by = int(lm[b].x*w), int(lm[b].y*h)
-        cv2.line(img,(ax,ay),(bx,by),col,2,cv2.LINE_AA)
+def best_triple(lm, l1, r1, l2, r2, l3, r3):
+    """세 쌍 중 visibility 합이 높은 쪽 (i1,i2,i3) 반환"""
+    l_score = get_vis(lm,l1) + get_vis(lm,l2) + get_vis(lm,l3)
+    r_score = get_vis(lm,r1) + get_vis(lm,r2) + get_vis(lm,r3)
+    return (l1,l2,l3) if l_score >= r_score else (r1,r2,r3)
 
-    for idx in [8,12,14,16,20,24,26,28]:
-        x,y = int(lm[idx].x*w), int(lm[idx].y*h)
-        cv2.circle(img,(x,y),5,col,-1,cv2.LINE_AA)
-        cv2.circle(img,(x,y),5,(255,255,255),1,cv2.LINE_AA)
+def calc_angle_3pts(A, B, C):
+    v1 = np.array(A) - np.array(B)
+    v2 = np.array(C) - np.array(B)
+    cos_t = np.dot(v1, v2) / (np.linalg.norm(v1) * np.linalg.norm(v2) + 1e-8)
+    return float(np.degrees(np.arccos(np.clip(cos_t, -1.0, 1.0))))
 
-# ── 정상범위 호(arc) + 이상적 포인트 표시 ─────────────────
-def draw_ideal_arc(img, center, p1, p2, current_angle,
-                   good_min, good_max, is_good, radius=45):
-    cx,cy = int(center[0]),int(center[1])
-    x1,y1 = int(p1[0]),int(p1[1])
-    x2,y2 = int(p2[0]),int(p2[1])
+def calc_vertical_angle(p1, p2):
+    vec = (p2[0]-p1[0], p2[1]-p1[1])
+    return float(np.degrees(np.arctan2(abs(vec[0]), abs(vec[1]))))
 
-    v1 = np.array([x1-cx,y1-cy],dtype=float)
-    v2 = np.array([x2-cx,y2-cy],dtype=float)
+def clip_val(v, lo, hi):
+    return float(np.clip(v, lo, hi)) if v is not None else None
 
-    def ang(v):
-        return math.degrees(math.atan2(v[1],v[0]))
+def to_px(lm, idx, w, h):
+    return (int(lm[idx].x * w), int(lm[idx].y * h))
 
-    a1 = ang(v1)
-    a2 = ang(v2)
+def to_norm(lm, idx):
+    return (lm[idx].x, lm[idx].y)
 
-    range_col = C['range']
-    ov        = img.copy()
-    cv2.ellipse(ov,(cx,cy),(radius,radius),0,
-                int(min(a1,a2)),int(max(a1,a2)),
-                (range_col[2],range_col[1],range_col[0]),4)
-    cv2.addWeighted(ov,0.5,img,0.5,0,img)
+def target_pt(pt, ref_pt, offset=OFFSET_PX):
+    if ref_pt is None:
+        return (pt[0], pt[1] - offset)
+    dx, dy = ref_pt[0]-pt[0], ref_pt[1]-pt[1]
+    dist   = max((dx**2+dy**2)**0.5, 1e-8)
+    return (int(pt[0]+dx/dist*offset), int(pt[1]+dy/dist*offset))
 
-    ideal_ang_rad = math.radians((a1+a2)/2)
-    ix = int(cx + radius*math.cos(ideal_ang_rad))
-    iy = int(cy + radius*math.sin(ideal_ang_rad))
-    ic = C['ideal']
-    cv2.circle(img,(ix,iy),8,(ic[2],ic[1],ic[0]),-1,cv2.LINE_AA)
-    cv2.circle(img,(ix,iy),8,(255,255,255),1,cv2.LINE_AA)
 
-# ── YOLO bbox ──────────────────────────────────────────────
-def draw_yolo_boxes(img, bbox):
-    pil = Image.fromarray(cv2.cvtColor(img,cv2.COLOR_BGR2RGB))
-    d   = ImageDraw.Draw(pil)
-    cm  = {'chair':C['chair'],'desk':C['desk'],'monitor':C['monitor']}
-    lm_ = {'chair':'의자','desk':'책상','monitor':'모니터'}
-    for name,b in bbox.items():
-        if b is None: continue
-        rc = cm[name]
-        pc = (rc[0],rc[1],rc[2])
-        x1,y1,x2,y2 = b['x_min'],b['y_min'],b['x_max'],b['y_max']
-        ov = img.copy()
-        cv2.rectangle(ov,(x1,y1),(x2,y2),(rc[2],rc[1],rc[0]),2)
-        cv2.addWeighted(ov,0.7,img,0.3,0,img)
-        pil = Image.fromarray(cv2.cvtColor(img,cv2.COLOR_BGR2RGB))
-        d   = ImageDraw.Draw(pil)
-        sz  = 16
-        for cx_,cy_,dx,dy in [(x1,y1,1,1),(x2,y1,-1,1),(x1,y2,1,-1),(x2,y2,-1,-1)]:
-            d.line([(cx_,cy_),(cx_+dx*sz,cy_)],fill=pc,width=3)
-            d.line([(cx_,cy_),(cx_,cy_+dy*sz)],fill=pc,width=3)
-        tw = len(lm_[name])*12+16
-        d.rounded_rectangle([(x1,y1-28),(x1+tw,y1-2)],radius=4,fill=pc)
-        d.text((x1+8,y1-25),lm_[name],font=F14,fill=(255,255,255))
-    img[:] = cv2.cvtColor(np.array(pil),cv2.COLOR_RGB2BGR)
-
-# ── 관절 포인트 ────────────────────────────────────────────
-def draw_point(img, pt, is_good, label):
-    x,y = int(pt[0]),int(pt[1])
-    sc_ = C['good'] if is_good else C['bad']
-    col = (sc_[2],sc_[1],sc_[0])
-    ov  = img.copy()
-    cv2.circle(ov,(x,y),18,col,-1)
-    cv2.addWeighted(ov,0.45,img,0.55,0,img)
-    cv2.circle(img,(x,y),18,col,2,cv2.LINE_AA)
-    cv2.circle(img,(x,y),5,(255,255,255),-1,cv2.LINE_AA)
-    pil = Image.fromarray(cv2.cvtColor(img,cv2.COLOR_BGR2RGB))
-    d   = ImageDraw.Draw(pil)
-    tw  = len(label)*9+16
-    d.rounded_rectangle([(x+22,y-16),(x+22+tw,y+14)],radius=5,fill=(7,12,26))
-    d.text((x+27,y-14),label,font=F14,fill=sc_)
-    img[:] = cv2.cvtColor(np.array(pil),cv2.COLOR_RGB2BGR)
-
-def wrap(text,mc=24):
-    lines=text.split('\n'); res=[]
-    for l in lines:
-        while len(l)>mc: res.append(l[:mc]); l=l[mc:]
-        res.append(l)
-    return res
-
-# ── 카드 (2열) ─────────────────────────────────────────────
-def draw_card(draw, x, y, W, key, value, is_good):
-    fb    = FEEDBACK[key]
-    sc_   = C['good'] if is_good else C['bad']
-    stat  = 'GOOD' if is_good else 'BAD'
-    msg   = fb['good'] if is_good else fb['bad']
-    lines = wrap(msg,24)
-    cc    = C['card']
-    H     = 24+26+24+len(lines)*18+16
-
-    draw.rounded_rectangle([(x,y),(x+W,y+H)],radius=8,fill=(cc[0],cc[1],cc[2]))
-    draw.rounded_rectangle([(x,y),(x+W,y+5)],radius=4,fill=(sc_[0],sc_[1],sc_[2]))
-
-    td = C['td']
-    draw.text((x+10,y+10),fb['no'],font=F12,fill=(td[0],td[1],td[2]))
-    tw_ = C['tw']
-    draw.text((x+36,y+9),fb['label'],font=F16,fill=(tw_[0],tw_[1],tw_[2]))
-    tg_ = C['tg']
-    draw.text((x+36+len(fb['label'])*12,y+12),f"  {fb['eng']}",
-              font=F10,fill=(tg_[0],tg_[1],tg_[2]))
-
-    bw=70
-    draw.rounded_rectangle([(x+W-bw-6,y+9),(x+W-6,y+27)],
-                           radius=3,fill=(sc_[0],sc_[1],sc_[2]))
-    draw.text((x+W-bw+6,y+11),stat,font=F12,fill=(255,255,255))
-
-    bl = C['blue']
-    draw.rounded_rectangle([(x+8,y+32),(x+W-8,y+54)],
-                           radius=4,fill=(bl[0]//5,bl[1]//5,bl[2]//5+15))
-    draw.text((x+14,y+35),
-              f"정상범위  {fb['range']}   |   측정값  {value}",
-              font=F10,fill=(bl[0],bl[1],bl[2]))
-
-    my=y+58
-    for l in lines:
-        draw.text((x+10,my),l,font=F14,fill=(tg_[0],tg_[1],tg_[2]))
-        my+=18
-    return H
-
-# ── 섹션 헤더 ──────────────────────────────────────────────
-def draw_sec(draw,x,y,W,title,sub,col):
-    cc = C['card2']
-    draw.rounded_rectangle([(x,y),(x+W,y+52)],radius=6,fill=(cc[0],cc[1],cc[2]))
-    draw.rounded_rectangle([(x,y),(x+5,y+52)],radius=3,fill=(col[0],col[1],col[2]))
-    tw_ = C['tw']
-    draw.text((x+18,y+7),title,font=F18,fill=(col[0],col[1],col[2]))
-    tg_ = C['tg']
-    draw.text((x+18,y+32),sub,font=F12,fill=(tg_[0],tg_[1],tg_[2]))
-    return y+60
-
-# ── 패널 빌드 ──────────────────────────────────────────────
-def build_panel(img, pd_, ed_, is_good, conf):
-    INNER = PW-36
-    GAP   = 12
-    CW    = (INNER-GAP)//2
-    px    = IW+18
-
-    img_r = cv2.resize(img,(IW,TH),interpolation=cv2.INTER_LANCZOS4)
-    panel = np.zeros((TH,PW,3),dtype=np.uint8)
-    bg    = C['base']
-    panel[:] = (bg[2],bg[1],bg[0])
-
-    canvas = np.hstack([img_r,panel])
-    pil    = Image.fromarray(cv2.cvtColor(canvas,cv2.COLOR_BGR2RGB))
-    draw   = ImageDraw.Draw(pil)
-
-    py = 0
-
-    # ── 헤더 ───────────────────────────────────────────────
-    hh = C['header']
-    draw.rectangle([(IW,0),(TW,110)],fill=(hh[0],hh[1],hh[2]))
-
-    logo_ok = False
+# =====================================================================
+# Step 1. MediaPipe 관절 추출
+# =====================================================================
+def step1_mediapipe(image_path):
+    import mediapipe as mp
+    img_cv  = cv2.imread(image_path)
+    img_rgb = cv2.cvtColor(img_cv, cv2.COLOR_BGR2RGB)
+    h, w    = img_cv.shape[:2]
     try:
-        logo = Image.open(LOGO_PATH).convert("L")
-        logo_color = Image.new("RGB", logo.size, (0,215,190))
-        logo_alpha = logo.point(lambda p: int(p * 0.85))
-        logo_rgba  = Image.merge("RGBA",[logo_color.split()[0],
-                                         logo_color.split()[1],
-                                         logo_color.split()[2],
-                                         logo_alpha])
-        lh = 80
-        lw = int(logo.width*(lh/logo.height))
-        logo_rgba = logo_rgba.resize((lw,lh),Image.LANCZOS)
-        bg_patch  = Image.new("RGBA",(lw,lh),(hh[0],hh[1],hh[2],255))
-        bg_patch.alpha_composite(logo_rgba)
-        pil.paste(bg_patch.convert("RGB"),(px,15))
-        lx = px+lw+20
-        logo_ok = True
-    except:
-        lx = px
+        import mediapipe.solutions.pose as _
+        det     = mp.solutions.pose.Pose(static_image_mode=True, min_detection_confidence=0.5)
+        results = det.process(img_rgb)
+        lm      = results.pose_landmarks.landmark if results.pose_landmarks else None
+    except Exception:
+        from mediapipe.tasks import python
+        from mediapipe.tasks.python import vision
+        opts = vision.PoseLandmarkerOptions(
+            base_options=python.BaseOptions(model_asset_path=MP_MODEL),
+            running_mode=vision.RunningMode.IMAGE,
+            num_poses=1, min_pose_detection_confidence=0.5
+        )
+        det    = vision.PoseLandmarker.create_from_options(opts)
+        mp_img = mp.Image(image_format=mp.ImageFormat.SRGB, data=img_rgb)
+        res    = det.detect(mp_img)
+        lm     = res.pose_landmarks[0] if res.pose_landmarks else None
+    return lm, h, w
 
-    ac = C['brand']
-    if logo_ok:
-        tw_ = C['tw']
-        draw.text((lx,16),"Fit Me Up",font=F26,fill=(tw_[0],tw_[1],tw_[2]))
-        tg_ = C['tg']
-        draw.text((lx,52),"beyond the hospital, in to your life",
-                  font=F12,fill=(tg_[0],tg_[1],tg_[2]))
-        draw.text((lx,70),"VDT 근로자 자세·환경 AI 분석 시스템",
-                  font=F12,fill=(tg_[0],tg_[1],tg_[2]))
-    else:
-        draw.text((px,18),"Fit Me Up",font=F32,fill=(ac[0],ac[1],ac[2]))
-        tg_ = C['tg']
-        draw.text((px,58),"beyond the hospital, in to your life",
-                  font=F14,fill=(tg_[0],tg_[1],tg_[2]))
 
-    now = datetime.datetime.now().strftime("%Y.%m.%d  %H:%M")
-    td_ = C['td']
-    tg_ = C['tg']
-    for i,(k,v) in enumerate([("분석 일시",now),
-                               ("근거 법령","VDT 고시 제2020-17호"),
-                               ("평가 기준","RULA · 산업안전보건법")]):
-        draw.text((TW-260,14+i*30),k,font=F10,fill=(td_[0],td_[1],td_[2]))
-        draw.text((TW-260,26+i*30),v,font=F12,fill=(tg_[0],tg_[1],tg_[2]))
+# =====================================================================
+# Step 2. CNN + CVA·TIA 1차 판정
+# =====================================================================
+def step2_cnn_cva_tia(image_path, lm, h, w):
+    sys.path.insert(0, os.path.join(BASE, 'MediaPipe', 'code'))
+    from predict import predict_posture
+    cnn = predict_posture(image_path)
+    if 'error' in cnn:
+        return cnn, None
 
-    draw.rectangle([(IW,107),(TW,111)],fill=(ac[0],ac[1],ac[2]))
-    py = 120
+    all_ind = {}
 
-    # ── 범례 ───────────────────────────────────────────────
-    legend_items = [
-        (C['skel'],  "측면 골격선"),
-        (C['good'],  "정상 판정"),
-        (C['bad'],   "교정 필요"),
-        (C['ideal'], "이상적 포인트"),
-        (C['range'], "정상범위 호"),
+    # CVA: 귀→어깨 (좌우 중 visibility 높은 쪽)
+    try:
+        ear_idx, sh_idx = best_pair(lm, 7, 8, 11, 12)
+        if is_vis(lm, ear_idx) and is_vis(lm, sh_idx):
+            cva = clip_val(calc_vertical_angle(to_norm(lm, ear_idx), to_norm(lm, sh_idx)), 0, 90)
+            all_ind['cva'] = {'value': round(cva, 1), 'ok': cva <= THRESHOLD_CVA,
+                              'joints': (ear_idx, sh_idx)}
+        else:
+            all_ind['cva'] = {'value': None, 'ok': None, 'joints': (ear_idx, sh_idx)}
+    except Exception:
+        all_ind['cva'] = {'value': None, 'ok': None, 'joints': (8, 12)}
+
+    # TIA: 어깨중점→골반중점 (좌우 중 visibility 합 높은 쪽)
+    try:
+        sh_idx, hp_idx = best_pair(lm, 11, 12, 23, 24)
+        sh_norm = to_norm(lm, sh_idx)
+        hp_norm = to_norm(lm, hp_idx)
+        tia = clip_val(calc_vertical_angle(sh_norm, hp_norm), 0, 60)
+        all_ind['tia'] = {'value': round(tia, 1), 'ok': tia <= THRESHOLD_TIA,
+                          'joints': (sh_idx, hp_idx)}
+    except Exception:
+        all_ind['tia'] = {'value': None, 'ok': None, 'joints': (12, 24)}
+
+    return cnn, all_ind
+
+
+# =====================================================================
+# Step 3. YOLO 환경 탐지
+# =====================================================================
+def step3_yolo(image_path):
+    from ultralytics import YOLO as YOLOModel
+    bboxes = {'chair': None, 'desk': None, 'monitor': None}
+    if not os.path.exists(YOLO_MODEL):
+        return bboxes
+    res   = YOLOModel(YOLO_MODEL).predict(source=image_path, conf=0.45, verbose=False)
+    boxes = res[0].boxes
+    if boxes and len(boxes) > 0:
+        for box in boxes:
+            name = YOLO_CLASSES.get(int(box.cls[0]))
+            if not name: continue
+            conf = float(box.conf[0])
+            if bboxes[name] is None or conf > bboxes[name]['conf']:
+                x1,y1,x2,y2 = box.xyxy[0].tolist()
+                bboxes[name] = {'x_min':x1,'y_min':y1,'x_max':x2,'y_max':y2,'conf':conf}
+    return bboxes
+
+
+# =====================================================================
+# Step 4. 나머지 6개 지표 (RULA/VDT 기준)
+# =====================================================================
+def step4_remaining(lm, h, w, bboxes, img_w, img_h):
+    # 상체 기준 단위 (visibility 높은 쪽 어깨-골반)
+    sh_idx, hp_idx = best_pair(lm, 11, 12, 23, 24)
+    ref_unit = abs(lm[sh_idx].y - lm[hp_idx].y) + 1e-8
+    ind = {}
+
+    # 팔꿈치: 어깨-팔꿈치-손목 (좌우 중 visibility 합 높은 쪽)
+    try:
+        i1,i2,i3 = best_triple(lm, 11,12, 13,14, 15,16)
+        if all(is_vis(lm,i) for i in [i1,i2,i3]):
+            v = clip_val(calc_angle_3pts(to_px(lm,i1,w,h), to_px(lm,i2,w,h), to_px(lm,i3,w,h)), 0, 180)
+            lo,hi = RANGE_ELBOW
+            ind['elbow'] = {'value': round(v,1), 'ok': lo<=v<=hi, 'joints': (i1,i2,i3)}
+        else:
+            ind['elbow'] = {'value': None, 'ok': None, 'joints': (12,14,16)}
+    except Exception:
+        ind['elbow'] = {'value': None, 'ok': None, 'joints': (12,14,16)}
+
+    # 무릎: 골반-무릎-발목
+    try:
+        i1,i2,i3 = best_triple(lm, 23,24, 25,26, 27,28)
+        if all(is_vis(lm,i) for i in [i1,i2,i3]):
+            v = clip_val(calc_angle_3pts(to_px(lm,i1,w,h), to_px(lm,i2,w,h), to_px(lm,i3,w,h)), 0, 180)
+            lo,hi = RANGE_KNEE
+            ind['knee'] = {'value': round(v,1), 'ok': lo<=v<=hi, 'joints': (i1,i2,i3)}
+        else:
+            ind['knee'] = {'value': None, 'ok': None, 'joints': (24,26,28)}
+    except Exception:
+        ind['knee'] = {'value': None, 'ok': None, 'joints': (24,26,28)}
+
+    # 손목: 팔꿈치-손목-손가락MCP
+    try:
+        i1,i2,i3 = best_triple(lm, 13,14, 15,16, 19,20)
+        if all(is_vis(lm,i) for i in [i1,i2,i3]):
+            inner = calc_angle_3pts(to_px(lm,i1,w,h), to_px(lm,i2,w,h), to_px(lm,i3,w,h))
+            dev   = clip_val(abs(inner-180.0), 0, 90)
+            ind['wrist'] = {'value': round(dev,1), 'ok': dev<=THRESHOLD_WRIST, 'joints': (i1,i2,i3)}
+        else:
+            ind['wrist'] = {'value': None, 'ok': None, 'joints': (14,16,20)}
+    except Exception:
+        ind['wrist'] = {'value': None, 'ok': None, 'joints': (14,16,20)}
+
+    # 모니터 시선각
+    try:
+        mon      = bboxes.get('monitor')
+        eye_l, eye_r = 1, 4
+        eye_idx  = best_idx(lm, eye_l, eye_r)
+        if mon and is_vis(lm, eye_idx):
+            ex = lm[eye_idx].x * img_w
+            ey = lm[eye_idx].y * img_h
+            mx = (mon['x_min']+mon['x_max'])/2
+            my = (mon['y_min']+mon['y_max'])/2
+            gaze = clip_val(float(np.degrees(np.arctan2(my-ey, abs(mx-ex)))), -30, 60)
+            lo,hi = RANGE_GAZE
+            ind['gaze'] = {'value': round(gaze,1), 'ok': lo<=gaze<=hi, 'joints': (eye_idx,)}
+        else:
+            ind['gaze'] = {'value': None, 'ok': None, 'joints': (eye_idx,)}
+    except Exception:
+        ind['gaze'] = {'value': None, 'ok': None, 'joints': (1,)}
+
+    # 작업대 높이
+    try:
+        desk     = bboxes.get('desk')
+        el_idx   = best_idx(lm, 13, 14)
+        if desk and is_vis(lm, el_idx):
+            diff = abs(desk['y_min']/img_h - lm[el_idx].y) / ref_unit
+            ind['desk_h'] = {'value': round(diff,3), 'ok': diff<=THRESHOLD_DESK, 'joints': (el_idx,)}
+        else:
+            ind['desk_h'] = {'value': None, 'ok': None, 'joints': (el_idx,)}
+    except Exception:
+        ind['desk_h'] = {'value': None, 'ok': None, 'joints': (14,)}
+
+    # 의자-등받이 거리
+    try:
+        chair   = bboxes.get('chair')
+        hp_idx2 = best_idx(lm, 23, 24)
+        if chair and is_vis(lm, hp_idx2):
+            hip_w = max(abs(lm[23].x-lm[24].x), abs(lm[11].x-lm[12].x), 0.05)
+            gap   = abs(lm[hp_idx2].x - chair['x_max']/img_w) / hip_w
+            ind['chair_d'] = {'value': round(gap,3), 'ok': gap<=THRESHOLD_CHAIR, 'joints': (hp_idx2,)}
+        else:
+            ind['chair_d'] = {'value': None, 'ok': None, 'joints': (hp_idx2,)}
+    except Exception:
+        ind['chair_d'] = {'value': None, 'ok': None, 'joints': (24,)}
+
+    return ind
+
+
+# =====================================================================
+# Step 5. 오버레이 시각화
+# =====================================================================
+def step5_overlay(image_path, lm, h, w, all_ind, early_stop):
+    img = cv2.imread(image_path)
+    ih, iw = img.shape[:2]
+
+    def pt(idx): return to_px(lm, idx, w, h)
+
+    # ── 뼈대 연결선 (visibility 높은 쪽만) ───────────────────────────
+    sh_idx, hp_idx = best_pair(lm, 11, 12, 23, 24)
+    ear_idx        = best_idx(lm, 7, 8)
+    el_idx         = best_idx(lm, 13, 14)
+    wr_idx         = best_idx(lm, 15, 16)
+    kn_idx         = best_idx(lm, 25, 26)
+    an_idx         = best_idx(lm, 27, 28)
+
+    bones = [
+        (ear_idx, sh_idx),
+        (sh_idx,  hp_idx),
+        (sh_idx,  el_idx),
+        (el_idx,  wr_idx),
+        (hp_idx,  kn_idx),
+        (kn_idx,  an_idx),
     ]
-    lx_l, ly_l = 20, TH-160
-    draw.rounded_rectangle([(lx_l-8,ly_l-8),(lx_l+200,ly_l+len(legend_items)*24+8)],
-                           radius=6,fill=(7,12,26))
-    for i,(col,label) in enumerate(legend_items):
-        cy_ = ly_l+i*24+8
-        draw.ellipse([(lx_l,cy_),(lx_l+14,cy_+14)],fill=(col[0],col[1],col[2]))
-        draw.text((lx_l+20,cy_-1),label,font=F12,fill=(130,150,190))
+    for a, b in bones:
+        if is_vis(lm, a) and is_vis(lm, b):
+            cv2.line(img, pt(a), pt(b), COLOR_BONE, 2, cv2.LINE_AA)
 
-    # ── 종합 판정 카드 ─────────────────────────────────────
-    all_d    = {**pd_,**ed_}
-    good_cnt = sum(1 for _,(_,g) in all_d.items() if g)
-    total    = len(all_d)
-    score    = int(good_cnt/total*100)
-    sc_      = C['good'] if is_good else C['bad']
-    cc_      = C['card2']
+    # ── 관절 점 + Bad 목표 점 ────────────────────────────────────────
+    JOINT_REF = {
+        'cva':     lambda: (pt(ear_idx), pt(sh_idx)),
+        'tia':     lambda: (pt(sh_idx),  pt(hp_idx)),
+        'elbow':   lambda: (pt(el_idx),  pt(sh_idx)),
+        'knee':    lambda: (pt(kn_idx),  pt(hp_idx)),
+        'wrist':   lambda: (pt(wr_idx),  pt(el_idx)),
+        'gaze':    lambda: (pt(ear_idx), (pt(ear_idx)[0], pt(ear_idx)[1]-OFFSET_PX)),
+        'desk_h':  lambda: (pt(el_idx),  (pt(el_idx)[0],  pt(el_idx)[1]-OFFSET_PX)),
+        'chair_d': lambda: (pt(hp_idx),  (pt(hp_idx)[0]+OFFSET_PX, pt(hp_idx)[1])),
+    }
 
-    draw.rounded_rectangle([(px,py),(px+INNER,py+105)],
-                           radius=10,fill=(cc_[0],cc_[1],cc_[2]))
-    draw.rounded_rectangle([(px,py),(px+7,py+105)],
-                           radius=5,fill=(sc_[0],sc_[1],sc_[2]))
+    keys = ['cva','tia'] if early_stop else list(JOINT_REF.keys())
 
-    cr  = 42
-    ccx = px+INNER-cr-20
-    ccy = py+52
-    draw.ellipse([(ccx-cr,ccy-cr),(ccx+cr,ccy+cr)],
-                 fill=(sc_[0]//5,sc_[1]//5,sc_[2]//5))
-    draw.ellipse([(ccx-cr,ccy-cr),(ccx+cr,ccy+cr)],
-                 outline=(sc_[0],sc_[1],sc_[2]),width=3)
-    draw.text((ccx-24,ccy-22),f"{score}",font=F32,fill=(sc_[0],sc_[1],sc_[2]))
-    draw.text((ccx-8,ccy+14),"점",font=F12,fill=(sc_[0],sc_[1],sc_[2]))
+    for key in keys:
+        info = all_ind.get(key)
+        if not info: continue
+        ok = info.get('ok')
+        if ok is None: continue
 
-    icon = "✅" if is_good else "❌"
-    stat = "GOOD — 자세 양호" if is_good else "BAD — 교정 필요"
-    tw_  = C['tw']
-    draw.text((px+22,py+10),f"{icon}  {stat}",font=F26,fill=(sc_[0],sc_[1],sc_[2]))
-    tg_  = C['tg']
-    detail = "자세 지표 양호 · 작업 환경 분석 진행" if is_good \
-             else "신체 자세 교정이 우선적으로 필요합니다"
-    draw.text((px+22,py+50),detail,font=F16,fill=(tg_[0],tg_[1],tg_[2]))
-    draw.text((px+22,py+72),
-              f"AI 신뢰도  {conf*100:.1f}%   ·   통과  {good_cnt}/{total}개",
-              font=F14,fill=(tg_[0],tg_[1],tg_[2]))
+        joint_pt, ref_pt = JOINT_REF[key]()
 
-    bx,by = px+22,py+90
-    bw_   = max(10, INNER - (ccx - px) - cr*2 - 40)
-    c2_   = C['card']
-    draw.rounded_rectangle([(bx,by),(bx+bw_,by+9)],radius=4,fill=(c2_[0],c2_[1],c2_[2]))
-    fw = int(bw_*score/100)
-    if fw>0:
-        draw.rounded_rectangle([(bx,by),(bx+fw,by+9)],radius=4,fill=(sc_[0],sc_[1],sc_[2]))
-    py += 116
+        if ok:
+            cv2.circle(img, joint_pt, 11, COLOR_GOOD,        -1)
+            cv2.circle(img, joint_pt, 13, (255,255,255),       2)
+        else:
+            # Bad 관절 → 빨간 점
+            cv2.circle(img, joint_pt, 11, COLOR_BAD,          -1)
+            cv2.circle(img, joint_pt, 13, (255,255,255),       2)
+            # 목표 초록 점
+            tgt = target_pt(joint_pt, ref_pt)
+            cv2.circle(img, tgt,       9, COLOR_TARGET,       -1)
+            cv2.circle(img, tgt,       11, (255,255,255),      2)
+            # 화살표
+            cv2.arrowedLine(img, joint_pt, tgt, (180,180,180), 1, tipLength=0.35)
+            # 수치 텍스트
+            v = info.get('value')
+            if v is not None:
+                unit = IND_UNITS.get(key, '')
+                cv2.putText(img, f"{v}{unit}",
+                            (joint_pt[0]+14, joint_pt[1]-6),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.48,
+                            (80, 80, 230), 1, cv2.LINE_AA)
 
-    # ── 카드 렌더링 (2열) ──────────────────────────────────
-    def render_cards(draw, data, py):
-        keys = list(data.keys())
-        i    = 0
-        while i < len(keys):
-            lk     = keys[i]
-            lv,lg  = data[lk]
-            lh     = draw_card(draw,px,py,CW,lk,lv,lg)
-            if i+1 < len(keys):
-                rk    = keys[i+1]
-                rv,rg = data[rk]
-                rh    = draw_card(draw,px+CW+GAP,py,CW,rk,rv,rg)
-                row_h = max(lh,rh)
+    # ── HUD 패널 (우측 상단) ──────────────────────────────────────────
+    hud_keys = ['cva','tia'] if early_stop else list(INDICATOR_NAMES.keys())
+    panel_h  = 22 + len(hud_keys) * 22 + 8
+    panel_w  = 155
+    px0, py0 = iw - panel_w - 12, 12
+
+    overlay = img.copy()
+    cv2.rectangle(overlay, (px0-6, py0-6), (px0+panel_w, py0+panel_h),
+                  COLOR_HUD_BG, -1)
+    cv2.addWeighted(overlay, 0.75, img, 0.25, 0, img)
+    cv2.rectangle(img, (px0-6, py0-6), (px0+panel_w, py0+panel_h),
+                  (80,70,120), 1)
+
+    cv2.putText(img, "Fit me up", (px0, py0+10),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.42, (180,160,255), 1, cv2.LINE_AA)
+
+    for i, key in enumerate(hud_keys):
+        r    = all_ind.get(key, {})
+        ok   = r.get('ok')
+        v    = r.get('value')
+        name = INDICATOR_NAMES.get(key, key)
+        unit = IND_UNITS.get(key, '')
+        ty   = py0 + 26 + i * 22
+
+        color_txt = (100,220,120) if ok else ((100,100,230) if ok is False else (130,130,130))
+        val_str   = f"{v}{unit}" if v is not None else "N/A"
+        status    = "GOOD" if ok else ("BAD" if ok is False else "N/A")
+
+        cv2.putText(img, f"{name[:8]:<8}", (px0, ty),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.38, (200,195,220), 1, cv2.LINE_AA)
+        cv2.putText(img, f"{val_str:>7} {status}", (px0+62, ty),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.38, color_txt, 1, cv2.LINE_AA)
+
+    # ── 최종 판정 뱃지 (좌측 상단) ───────────────────────────────────
+    any_bad  = any(all_ind.get(k,{}).get('ok') is False for k in hud_keys)
+    verdict  = "BAD" if any_bad else "GOOD"
+    v_color  = COLOR_BAD if any_bad else COLOR_GOOD
+    cv2.rectangle(img, (10, 10), (82, 40), v_color, -1)
+    cv2.rectangle(img, (10, 10), (82, 40), (255,255,255), 1)
+    cv2.putText(img, verdict, (16, 32),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255,255,255), 2, cv2.LINE_AA)
+
+    return img
+
+
+# =====================================================================
+# 전체 파이프라인
+# =====================================================================
+def run_pipeline(image_path):
+    img_cv       = cv2.imread(image_path)
+    img_h, img_w = img_cv.shape[:2]
+
+    # Step 1
+    lm, h, w = step1_mediapipe(image_path)
+    if lm is None:
+        return None, None, None, "관절 탐지 실패 — 측면 이미지를 사용하세요."
+
+    # Step 2
+    cnn, all_ind = step2_cnn_cva_tia(image_path, lm, h, w)
+    if 'error' in cnn:
+        return None, None, None, f"CNN 오류: {cnn['error']}"
+
+    cva_ok     = all_ind.get('cva', {}).get('ok')
+    tia_ok     = all_ind.get('tia', {}).get('ok')
+    early_stop = (cva_ok is False) or (tia_ok is False)
+
+    if not early_stop:
+        # Step 3
+        bboxes = step3_yolo(image_path)
+        # Step 4
+        rest   = step4_remaining(lm, h, w, bboxes, img_w, img_h)
+        all_ind.update(rest)
+
+    # Step 5
+    overlay = step5_overlay(image_path, lm, h, w, all_ind, early_stop)
+
+    return cnn, all_ind, overlay, early_stop
+
+
+# =====================================================================
+# Tkinter UI
+# =====================================================================
+class IntegrateApp:
+    def __init__(self, root):
+        self.root       = root
+        self.root.title("Fit me up | 자세 통합 분석")
+        self.root.geometry("1150x740")
+        self.root.configure(bg="#f4f4f4")
+        self.image_path = None
+        self.tk_img     = None
+        self._setup_ui()
+
+    def _setup_ui(self):
+        tk.Label(self.root, text="🧘 Fit me up  |  자세 통합 분석",
+                 font=("Malgun Gothic", 19, "bold"),
+                 bg="#1e1e2e", fg="white", pady=10
+        ).pack(fill=tk.X)
+
+        main = tk.Frame(self.root, bg="#f4f4f4")
+        main.pack(pady=14, padx=18, fill=tk.BOTH, expand=True)
+
+        # ── 왼쪽: 캔버스 ──────────────────────────────────────────────
+        left = tk.Frame(main, bg="#f4f4f4")
+        left.pack(side=tk.LEFT, padx=8)
+
+        self.canvas = tk.Canvas(left, width=530, height=530,
+                                bg="white", highlightthickness=1,
+                                highlightbackground="#ccc")
+        self.canvas.pack()
+
+        btn_row = tk.Frame(left, bg="#f4f4f4")
+        btn_row.pack(pady=10)
+        tk.Button(btn_row, text="📁 이미지 선택", command=self.select_image,
+                  width=15, bg="#3498db", fg="white", relief=tk.FLAT).pack(side=tk.LEFT, padx=4)
+        tk.Button(btn_row, text="🔍 분석 시작",  command=self.run_analysis,
+                  width=15, bg="#2ecc71", fg="white", relief=tk.FLAT).pack(side=tk.LEFT, padx=4)
+        tk.Button(btn_row, text="🔄 초기화",     command=self.reset,
+                  width=10, bg="#95a5a6", fg="white", relief=tk.FLAT).pack(side=tk.LEFT, padx=4)
+
+        # ── 오른쪽: 결과 ──────────────────────────────────────────────
+        right = tk.Frame(main, bg="#f4f4f4")
+        right.pack(side=tk.LEFT, padx=14, fill=tk.Y)
+
+        # CNN 판정
+        self.res_panel = tk.Frame(right, width=350, height=76,
+                                  bg="#ecf0f1", relief=tk.RIDGE, bd=2)
+        self.res_panel.pack_propagate(False)
+        self.res_panel.pack(pady=(0,8))
+        self.lbl_result = tk.Label(self.res_panel, text="READY",
+                                   font=("Arial", 26, "bold"),
+                                   bg="#ecf0f1", fg="#7f8c8d")
+        self.lbl_result.pack(expand=True)
+        self.lbl_conf = tk.Label(right, text="신뢰도: —",
+                                 font=("Malgun Gothic", 10), bg="#f4f4f4",
+                                 fg="#555")
+        self.lbl_conf.pack(pady=(0,10))
+
+        # 지표 행
+        tk.Label(right, text="지표 판정",
+                 font=("Malgun Gothic", 11, "bold"), bg="#f4f4f4").pack(anchor="w")
+        self.ind_labels = {}
+        for key, name in INDICATOR_NAMES.items():
+            row = tk.Frame(right, bg="#f4f4f4")
+            row.pack(fill=tk.X, pady=2)
+            tk.Label(row, text=f"{name}",
+                     font=("Malgun Gothic", 9), bg="#f4f4f4",
+                     width=14, anchor="w").pack(side=tk.LEFT)
+            lbl = tk.Label(row, text="—", font=("Malgun Gothic", 9),
+                           bg="#f4f4f4", width=18, anchor="w")
+            lbl.pack(side=tk.LEFT)
+            self.ind_labels[key] = lbl
+
+        # 피드백 카드 영역 (스크롤)
+        tk.Label(right, text="피드백",
+                 font=("Malgun Gothic", 11, "bold"), bg="#f4f4f4").pack(anchor="w", pady=(10,4))
+        fb_outer = tk.Frame(right, bg="#f4f4f4")
+        fb_outer.pack(fill=tk.BOTH, expand=True)
+
+        self.fb_canvas  = tk.Canvas(fb_outer, bg="#f4f4f4", highlightthickness=0, width=350)
+        scrollbar       = tk.Scrollbar(fb_outer, orient="vertical", command=self.fb_canvas.yview)
+        self.fb_frame   = tk.Frame(self.fb_canvas, bg="#f4f4f4")
+
+        self.fb_frame.bind("<Configure>",
+            lambda e: self.fb_canvas.configure(scrollregion=self.fb_canvas.bbox("all")))
+        self.fb_canvas.create_window((0,0), window=self.fb_frame, anchor="nw")
+        self.fb_canvas.configure(yscrollcommand=scrollbar.set, height=230)
+
+        self.fb_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+    # ── 피드백 카드 생성 ──────────────────────────────────────────────
+    def _build_feedback_cards(self, all_ind, early_stop):
+        for w in self.fb_frame.winfo_children():
+            w.destroy()
+
+        keys = ['cva','tia'] if early_stop else list(INDICATOR_NAMES.keys())
+
+        for key in keys:
+            r    = all_ind.get(key, {})
+            ok   = r.get('ok')
+            v    = r.get('value')
+            fb   = FEEDBACK.get(key, {})
+            name = INDICATOR_NAMES.get(key, key)
+            unit = IND_UNITS.get(key, '')
+
+            if ok is None:
+                status, border, badge_bg, badge_fg, msg = \
+                    "N/A", "#aaa", "#eee", "#555", fb.get('na','—')
+                val_color = "#aaa"
+            elif ok:
+                status, border, badge_bg, badge_fg, msg = \
+                    "GOOD", "#1D9E75", "#d4f7e7", "#0a5e3a", fb.get('good','')
+                val_color = "#1D9E75"
             else:
-                row_h = lh
-            py += row_h+10
-            i  += 2
-            if py > TH-60: break
-        return py
+                status, border, badge_bg, badge_fg, msg = \
+                    "BAD", "#E24B4A", "#fde8e8", "#7a1010", fb.get('bad','')
+                val_color = "#E24B4A"
 
-    if not is_good:
-        bad_ = C['bad']
-        py   = draw_sec(draw,px,py,INNER,
-                        "📐  신체 자세 지표 분석",
-                        "RULA Group B 기준 · 목·몸통·팔꿈치·무릎·손목 평가",
-                        bad_)
-        py = render_cards(draw,pd_,py)
+            card = tk.Frame(self.fb_frame, bg="white",
+                            highlightbackground=border,
+                            highlightthickness=2,
+                            relief=tk.FLAT)
+            card.pack(fill=tk.X, pady=4, padx=2)
 
-    else:
-        gd_ = C['good']
-        py  = draw_sec(draw,px,py,INNER,
-                       "✅  신체 자세 지표 분석",
-                       "RULA Group B 기준 충족 · 세부 측정값 확인",
-                       gd_)
-        py = render_cards(draw,pd_,py)
+            # 왼쪽 컬러 바
+            tk.Frame(card, bg=border, width=5).pack(side=tk.LEFT, fill=tk.Y)
 
-        py += 6
-        br_ = C['brand']
-        py  = draw_sec(draw,px,py,INNER,
-                       "🖥  작업 환경 지표 분석",
-                       "VDT 고시 제6조 기준 · 모니터·책상·의자 환경 평가",
-                       br_)
-        py = render_cards(draw,ed_,py)
+            body = tk.Frame(card, bg="white", padx=10, pady=8)
+            body.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-    # ── 이미지 하단 정보 ───────────────────────────────────
-    td_ = C['td']
-    draw.text((20,TH-50),"MediaPipe Pose  ·  YOLOv8  ·  MobileNetV2",
-              font=F10,fill=(td_[0],td_[1],td_[2]))
-    draw.text((20,TH-32),"Fit Me Up AI Ergonomic Analysis Engine v1.0",
-              font=F10,fill=(td_[0],td_[1],td_[2]))
+            # 헤더: 이름 + 뱃지
+            hdr = tk.Frame(body, bg="white")
+            hdr.pack(fill=tk.X)
+            tk.Label(hdr, text=name, font=("Malgun Gothic", 10, "bold"),
+                     bg="white", fg="#222").pack(side=tk.LEFT)
+            tk.Label(hdr, text=f" {status} ",
+                     font=("Malgun Gothic", 8, "bold"),
+                     bg=badge_bg, fg=badge_fg,
+                     relief=tk.FLAT, padx=4).pack(side=tk.RIGHT)
 
-    # ── 푸터 ───────────────────────────────────────────────
-    hh_ = C['header']
-    draw.rectangle([(IW,TH-38),(TW,TH)],fill=(hh_[0],hh_[1],hh_[2]))
-    draw.rectangle([(IW,TH-39),(TW,TH-38)],fill=(ac[0],ac[1],ac[2]))
-    draw.text((px,TH-26),
-              "Fit Me Up  ·  beyond the hospital, in to your life  "
-              "·  VDT 고시 제2020-17호 / RULA / 산업안전보건법",
-              font=F10,fill=(td_[0],td_[1],td_[2]))
+            # 측정값 + 정상범위
+            val_row = tk.Frame(body, bg="white")
+            val_row.pack(fill=tk.X, pady=(3,0))
+            val_str = f"{v}{unit}" if v is not None else "—"
+            tk.Label(val_row, text=val_str,
+                     font=("Arial", 16, "bold"),
+                     bg="white", fg=val_color).pack(side=tk.LEFT)
+            tk.Label(val_row, text=f"  정상: {fb.get('range','—')}",
+                     font=("Malgun Gothic", 8),
+                     bg="white", fg="#888").pack(side=tk.LEFT, pady=(4,0))
 
-    return cv2.cvtColor(np.array(pil),cv2.COLOR_RGB2BGR)
+            # 피드백 메시지
+            tk.Label(body, text=msg,
+                     font=("Malgun Gothic", 8), bg="white",
+                     fg="#444", wraplength=295,
+                     justify=tk.LEFT, anchor="w").pack(fill=tk.X, pady=(4,0))
 
-# ── 메인 ───────────────────────────────────────────────────
-def analyze(image_path):
-    img     = cv2.imread(image_path)
-    img_rgb = cv2.cvtColor(img,cv2.COLOR_BGR2RGB)
-    h,w     = img.shape[:2]
+    # ── 이미지 선택 ───────────────────────────────────────────────────
+    def select_image(self):
+        path = filedialog.askopenfilename(
+            title="분석할 이미지 선택",
+            filetypes=[("Image files", "*.jpg *.jpeg *.png *.bmp *.webp")]
+        )
+        if not path: return
+        self.image_path = path
+        self._show_pil(Image.open(path))
+        self.reset_labels()
 
-    if USE_LEGACY:
-        res = pose.process(img_rgb)
-        if not res.pose_landmarks:
-            print("❌ 사람 인식 실패! 측면 전신 사진으로 재촬영하세요.")
+    # ── 분석 실행 ─────────────────────────────────────────────────────
+    def run_analysis(self):
+        if not self.image_path:
+            messagebox.showwarning("경고", "이미지를 먼저 선택하세요.")
             return
-        lm = res.pose_landmarks.landmark
-    else:
-        mpi = mp.Image(image_format=mp.ImageFormat.SRGB,data=img_rgb)
-        res = pose.detect(mpi)
-        if not res.pose_landmarks:
-            print("❌ 사람 인식 실패!")
+
+        self.lbl_result.config(text="분석 중...", bg="#e67e22", fg="white")
+        self.res_panel.config(bg="#e67e22")
+        self.root.update()
+
+        cnn, all_ind, overlay, early_stop = run_pipeline(self.image_path)
+
+        if isinstance(early_stop, str):
+            messagebox.showerror("Error", early_stop)
+            self.reset_labels()
             return
-        lm = res.pose_landmarks[0]
 
-    print("✅ 인체 랜드마크 검출 완료")
+        # CNN 결과
+        label = cnn.get('label','?').upper()
+        conf  = cnn.get('confidence', 0) * 100
+        color = "#27ae60" if label == "GOOD" else "#e74c3c"
+        self.lbl_result.config(text=label, bg=color, fg="white")
+        self.res_panel.config(bg=color)
+        self.lbl_conf.config(text=f"신뢰도: {conf:.1f}%")
 
-    posture = predict_posture(image_path)
-    if 'error' in posture:
-        print(f"❌ 모델 오류: {posture['error']}")
-        return
+        # 지표 라벨
+        for key, lbl in self.ind_labels.items():
+            r  = all_ind.get(key)
+            if r is None:
+                lbl.config(text="—", fg="#aaa"); continue
+            ok = r.get('ok')
+            v  = r.get('value')
+            unit = IND_UNITS.get(key,'')
+            if ok is None:
+                lbl.config(text="N/A", fg="#aaa")
+            elif ok:
+                lbl.config(text=f"✓  {v}{unit}", fg="#1D9E75")
+            else:
+                lbl.config(text=f"✗  {v}{unit}", fg="#e74c3c")
 
-    is_good = posture['label']=='good'
-    conf    = posture['confidence']
-    print(f"📊 {'GOOD ✅' if is_good else 'BAD ❌'} (신뢰도 {conf*100:.1f}%)")
+        # 피드백 카드
+        self._build_feedback_cards(all_ind, early_stop)
 
-    def gxy(idx):
-        return (lm[idx].x*w, lm[idx].y*h)
+        # 오버레이 이미지
+        overlay_rgb = cv2.cvtColor(overlay, cv2.COLOR_BGR2RGB)
+        self._show_pil(Image.fromarray(overlay_rgb))
 
-    ear_r   = gxy(8)
-    sh_l    = gxy(11)
-    sh_r    = gxy(12)
-    elbow_r = gxy(14)
-    wrist_r = gxy(16)
-    finger  = gxy(20)
-    hp_l    = gxy(23)
-    hp_r    = gxy(24)
-    knee_r  = gxy(26)
-    ankle_r = gxy(28)
-    eye_c   = ((lm[1].x+lm[4].x)/2*w,(lm[1].y+lm[4].y)/2*h)
-    sh_mid  = ((sh_l[0]+sh_r[0])/2,(sh_l[1]+sh_r[1])/2)
-    hp_mid  = ((hp_l[0]+hp_r[0])/2,(hp_l[1]+hp_r[1])/2)
+    # ── 초기화 ────────────────────────────────────────────────────────
+    def reset(self):
+        self.image_path = None
+        self.canvas.delete("all")
+        self.reset_labels()
 
-    yr   = yolo(img)[0]
-    bbox = {'chair':None,'desk':None,'monitor':None}
-    for box in yr.boxes:
-        cls_  = int(box.cls[0])
-        conf_ = float(box.conf[0])
-        name  = CLASS_NAMES.get(cls_)
-        if name and conf_>=0.25:
-            x1,y1,x2,y2 = map(int,box.xyxy[0])
-            bbox[name]={'x_min':x1,'y_min':y1,'x_max':x2,'y_max':y2}
+    def reset_labels(self):
+        self.lbl_result.config(text="READY", bg="#ecf0f1", fg="#7f8c8d")
+        self.res_panel.config(bg="#ecf0f1")
+        self.lbl_conf.config(text="신뢰도: —")
+        for lbl in self.ind_labels.values():
+            lbl.config(text="—", fg="#aaa")
+        for w in self.fb_frame.winfo_children():
+            w.destroy()
 
-    cva = round(calc_vert(ear_r,sh_r),1)
-    tia = round(calc_vert(sh_mid,hp_mid),1)
-    el  = round(calc_angle(sh_r,elbow_r,wrist_r),1)
-    kn  = round(calc_angle(hp_r,knee_r,ankle_r),1)
-    wr  = round(calc_angle(elbow_r,wrist_r,finger),1)
+    def _show_pil(self, pil_img):
+        pil_img.thumbnail((530, 530))
+        self.tk_img = ImageTk.PhotoImage(pil_img)
+        self.canvas.delete("all")
+        self.canvas.create_image(265, 265, image=self.tk_img)
 
-    gaze=None
-    if bbox['monitor']:
-        mx=(bbox['monitor']['x_min']+bbox['monitor']['x_max'])/2
-        my=(bbox['monitor']['y_min']+bbox['monitor']['y_max'])/2
-        gaze=round(calc_gaze(eye_c,(mx,my)),1)
 
-    hd,dc=None,None
-    if bbox['desk']:
-        dty=bbox['desk']['y_min']
-        ref=abs(hp_mid[1]-sh_mid[1])
-        hd=round(abs(dty-elbow_r[1])/(ref+1e-8),3)
-        dc=((bbox['desk']['x_min']+bbox['desk']['x_max'])//2,dty)
-
-    gr=None
-    if bbox['chair']:
-        cbx=bbox['chair']['x_max']
-        hw=abs(hp_l[0]-hp_r[0]) or abs(sh_l[0]-sh_r[0])
-        gr=round(abs(hp_r[0]-cbx)/(hw+1e-8),3)
-
-    pd_ = {
-        'CVA':    (f"{cva}°",  judge(cva,0,20)=='Good'),
-        'TIA':    (f"{tia}°",  judge(tia,0,10)=='Good'),
-        '팔꿈치': (f"{el}°",   judge(el,90,120)=='Good'),
-        '무릎':   (f"{kn}°",   judge(kn,85,100)=='Good'),
-        '손목':   (f"{wr}°",   judge(wr,165,180)=='Good'),
-    }
-    ed_ = {
-        '시선각':  (f"{gaze}°" if gaze else 'N/A',
-                    judge(gaze,10,15)=='Good' if gaze else False),
-        '책상높이':(f"{hd}" if hd else 'N/A',
-                    judge(hd,0,0.10)=='Good' if hd else False),
-        '등받이':  (f"{gr}" if gr else 'N/A',
-                    judge(gr,0,0.20)=='Good' if gr else False),
-    }
-
-    print("\n"+"─"*50)
-    for k,(v,g) in {**pd_,**ed_}.items():
-        fb=FEEDBACK[k]
-        print(f"  {fb['no']}. {fb['label']:12s} {v:10s} {'✅' if g else '❌'}")
-    print("─"*50)
-
-    # ── 시각화 ─────────────────────────────────────────────
-    draw_skeleton(img,lm,h,w)
-
-    draw_ideal_arc(img,elbow_r,sh_r,wrist_r,el,90,120,pd_['팔꿈치'][1],50)
-    draw_ideal_arc(img,knee_r, hp_r,ankle_r,kn,85,100,pd_['무릎'][1],  50)
-    draw_ideal_arc(img,wrist_r,elbow_r,finger,wr,165,180,pd_['손목'][1],40)
-
-    draw_yolo_boxes(img,bbox)
-
-    draw_point(img,ear_r,   pd_['CVA'][1],    '①목')
-    draw_point(img,sh_mid,  pd_['TIA'][1],    '②허리')
-    draw_point(img,elbow_r, pd_['팔꿈치'][1], '③팔꿈치')
-    draw_point(img,knee_r,  pd_['무릎'][1],   '④무릎')
-    draw_point(img,wrist_r, pd_['손목'][1],   '⑤손목')
-
-    if is_good:
-        if gaze is not None:
-            draw_point(img,eye_c, ed_['시선각'][1],  '⑥시선')
-        if dc is not None:
-            draw_point(img,dc,    ed_['책상높이'][1],'⑦책상')
-        if gr is not None:
-            draw_point(img,hp_r,  ed_['등받이'][1],  '⑧등받이')
-
-    final = build_panel(img,pd_,ed_,is_good,conf)
-    out   = r"E:\python\FIT_ME_UP\result.jpg"
-    cv2.imwrite(out,final,[cv2.IMWRITE_JPEG_QUALITY,98])
-    print(f"\n✅ 저장 완료 ({TW}×{TH}): {out}")
-
+# =====================================================================
+# 실행
+# =====================================================================
 if __name__ == '__main__':
-    analyze(IMAGE_PATH)
+    root = tk.Tk()
+    IntegrateApp(root)
+    root.mainloop()

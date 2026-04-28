@@ -13,6 +13,7 @@ from ultralytics import YOLO
 BASE       = os.path.dirname(os.path.abspath(__file__))
 MODEL_PATH = os.path.join(BASE, 'fit_me_up', 'combined_gpu', 'weights', 'best.pt')
 CONF       = 0.25
+IOU        = 0.30   # 겹침 허용 범위 (낮을수록 중복 탐지 제거 적극적)
 CLASSES    = ['chair', 'desk', 'monitor']
 COLORS     = {
     'chair':   (52,  152, 219),   # 파랑
@@ -151,7 +152,7 @@ class YoloTestApp:
             messagebox.showerror("Error", "모델이 로드되지 않았습니다.")
             return
 
-        results = self.model.predict(source=self.image_path, conf=CONF, save=True, verbose=False)
+        results = self.model.predict(source=self.image_path, conf=CONF, iou=IOU, save=True, verbose=False)
         result  = results[0]
         boxes   = result.boxes
 
