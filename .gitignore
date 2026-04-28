@@ -1,61 +1,60 @@
 # =====================================================================
-# .gitignore | Fit Me Up
+# .gitignore | Fit_me_up 프로젝트
 # =====================================================================
 
-# 가상환경
+# ── 가상환경 ──────────────────────────────────────────────────────────
 .venv/
+venv/
+env/
 
-# 파이썬 캐시
-__pycache__/
-*.pyc
-*.pyo
+# ── 모델 파일 (용량 큼) ───────────────────────────────────────────────
+# MediaPipe
+MediaPipe/models/pose_landmarker.task
+MediaPipe/models/posture_mobilenetv2_finetuned.h5
+MediaPipe/models/posture_mlp_final.pkl
 
-# ── YOLO ──────────────────────────────────────────────────────────────
+# YOLO
+*.pt
+YOLO/fit_me_up/
 
-# 원본 이미지 (용량 큼 — Roboflow에서 별도 다운로드)
+# ── 데이터셋 (용량 큼) ────────────────────────────────────────────────
 YOLO/YOLO_full_body_Labeling/images/
-YOLO/YOLO_ankle_visible_Labeling/images/
-
-# 데이터 분할 결과 (split_images.py 실행 시 자동 생성)
+YOLO/YOLO_full_body_Labeling/labels/
 YOLO/YOLO_full_body_Labeling/split_data/
+YOLO/YOLO_ankle_visible_Labeling/images/
+YOLO/YOLO_ankle_visible_Labeling/labels/
 YOLO/YOLO_ankle_visible_Labeling/split_data/
+MediaPipe/data/labeled_dataset_v3.csv
 
-# 사전학습 모델 (별도 다운로드 필요)
-YOLO/yolov8n.pt
+# ── 학습 결과 / 로그 ──────────────────────────────────────────────────
+MediaPipe/reports/
+runs/
+*.log
 
-# 학습 로그 및 중간 결과물 (best.pt 제외)
-YOLO/fit_me_up/**/last.pt
-YOLO/fit_me_up/**/events.out.*
-YOLO/fit_me_up/**/*.png
-YOLO/fit_me_up/**/args.yaml
-YOLO/fit_me_up/**/train_batch*.jpg
-YOLO/fit_me_up/**/val_batch*.jpg
-YOLO/fit_me_up/**/predict/
-YOLO/runs/
+# ── Python 캐시 ───────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
 
-# best.pt는 포함 (Streamlit 실행에 필요)
-!YOLO/fit_me_up/**/weights/best.pt
+# ── Jupyter ───────────────────────────────────────────────────────────
+.ipynb_checkpoints/
+*.ipynb
 
-# ── MediaPipe ─────────────────────────────────────────────────────────
-
-# 학습 데이터 (용량 큼)
-MediaPipe/data/images/
-
-# MediaPipe .task 모델 (posture_test.py 실행 시 자동 다운로드)
-MediaPipe/data/models/
-
-# 학습된 모델은 포함 (Streamlit 실행에 필요)
-!MediaPipe/models/posture_mobilenetv2_finetuned.h5
-
-# ── 기타 ──────────────────────────────────────────────────────────────
-
-# 분석 결과 이미지 (integrate.py 실행 시 생성)
-result.jpg
-
-# IDE
-.vscode/
-.idea/
-
-# OS
+# ── OS ────────────────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
+desktop.ini
+
+# ── IDE ───────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.suo
+*.user
+
+# ── 기타 ──────────────────────────────────────────────────────────────
+*.tmp
+*.bak
+dist/
+build/
+*.egg-info/
