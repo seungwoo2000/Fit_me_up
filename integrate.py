@@ -213,13 +213,14 @@ def step2_mlp_cva_tia(image_path):
     cva_ok   = mlp_good
     tia_ok   = mlp_good
 
-    sh_idx_cva = best_idx(lm, 11, 12)
+    ear_idx_cva = best_idx(lm, 7, 8)    # 귀 (CVA 기준: 자세기준서)
+    sh_idx_cva  = best_idx(lm, 11, 12)
     sh_idx2, hp_idx = best_pair(lm, 11, 12, 23, 24)
 
     all_ind['cva'] = {
         'value':  round(cva, 1) if cva is not None else None,
         'ok':     cva_ok if cva is not None else None,
-        'joints': (0, sh_idx_cva)
+        'joints': (ear_idx_cva, sh_idx_cva)
     }
     all_ind['tia'] = {
         'value':  round(tia, 1) if tia is not None else None,
@@ -360,7 +361,8 @@ def step5_overlay(image_path, lm, h, w, all_ind, early_stop, bboxes=None):
 
     # ── 인덱스 ───────────────────────────────────────────────────────
     sh_idx, hp_idx = best_pair(lm, 11, 12, 23, 24)
-    nose_idx = 0
+    nose_idx = 0                     # 코 (촬영방향 감지용)
+    ear_idx  = best_idx(lm, 7, 8)   # 귀 (CVA 기준: 자세기준서)
     el_idx   = best_idx(lm, 13, 14)
     wr_idx   = best_idx(lm, 15, 16)
     fi_idx   = best_idx(lm, 17, 18)   # 소지MCP
@@ -457,18 +459,18 @@ def step5_overlay(image_path, lm, h, w, all_ind, early_stop, bboxes=None):
     tia_ok    = all_ind.get('tia', {}).get('ok')
     angle_bad = (cva_ok is False) or (tia_ok is False)
 
-    hp_pt   = pt(hp_idx)
-    sh_pt   = sh_mid
-    nose_pt = pt(nose_idx)
+    hp_pt  = pt(hp_idx)
+    sh_pt  = sh_mid
+    ear_pt = pt(ear_idx)   # 귀: CVA 기준점 (자세기준서)
 
-    # ── 현재 척추선 (CVA/TIA BAD=빨강, GOOD=초록) ────────────────────
+    # ── 현재 척추선: 골반→어깨→귀 (CVA/TIA BAD=빨강, GOOD=초록) ────
     cur_color = COLOR_BAD if angle_bad else COLOR_GOOD
-    spine([hp_pt, sh_pt, nose_pt], cur_color)
+    spine([hp_pt, sh_pt, ear_pt], cur_color)
 
     # ── CVA/TIA BAD: 목표 척추선 + 화살표 후 종료 ────────────────────
     if angle_bad:
-        sh_hp_d   = math.hypot(sh_pt[0]-hp_pt[0], sh_pt[1]-hp_pt[1])
-        nose_sh_d = math.hypot(nose_pt[0]-sh_pt[0], nose_pt[1]-sh_pt[1])
+        sh_hp_d  = math.hypot(sh_pt[0]-hp_pt[0], sh_pt[1]-hp_pt[1])
+        ear_sh_d = math.hypot(ear_pt[0]-sh_pt[0], ear_pt[1]-sh_pt[1])
 
         # TIA 목표: Good 중앙값 5° (어깨가 골반보다 forward 방향으로 5°)
         sh_tgt = sh_pt
@@ -477,19 +479,19 @@ def step5_overlay(image_path, lm, h, w, all_ind, early_stop, bboxes=None):
             dy = -int(sh_hp_d * math.cos(math.radians(5)))
             sh_tgt = (hp_pt[0]+dx, hp_pt[1]+dy)
 
-        # CVA 목표: Good 중앙값 10° (코가 어깨보다 forward 방향으로 10°)
-        nose_tgt = nose_pt
+        # CVA 목표: 귀-어깨 각도 Good 중앙값 10° (귀가 어깨보다 forward 방향으로 10°)
+        ear_tgt = ear_pt
         if cva_ok is False:
-            dx = int(forward * nose_sh_d * math.sin(math.radians(10)))
-            dy = -int(nose_sh_d * math.cos(math.radians(10)))
-            nose_tgt = (sh_tgt[0]+dx, sh_tgt[1]+dy)
+            dx = int(forward * ear_sh_d * math.sin(math.radians(10)))
+            dy = -int(ear_sh_d * math.cos(math.radians(10)))
+            ear_tgt = (sh_tgt[0]+dx, sh_tgt[1]+dy)
 
-        spine([hp_pt, sh_tgt, nose_tgt], COLOR_TARGET)
+        spine([hp_pt, sh_tgt, ear_tgt], COLOR_TARGET)
 
         if tia_ok is False and sh_tgt != sh_pt:
-            arrow(sh_pt, sh_tgt, COLOR_TARGET)
-        if cva_ok is False and nose_tgt != nose_pt:
-            arrow(nose_pt, nose_tgt, COLOR_TARGET)
+            arrow(sh_pt,  sh_tgt,  COLOR_TARGET)
+        if cva_ok is False and ear_tgt != ear_pt:
+            arrow(ear_pt, ear_tgt, COLOR_TARGET)
 
         return img   # ← 6개 지표 표시 안 함
 

@@ -21,9 +21,35 @@
   },
   "abc": {
     "name": "abc",
-    "total_point": 1332,
-    "count": 26,
+    "total_point": 1418,
+    "count": 28,
     "records": [
+      {
+        "score": 4.3,
+        "point": 43,
+        "risk": "위험",
+        "good": 2,
+        "total": 7,
+        "bad_items": [
+          "목굴곡각",
+          "팔꿈치 각도",
+          "손목 각도"
+        ],
+        "time": "2026-04-29 09:56"
+      },
+      {
+        "score": 4.3,
+        "point": 43,
+        "risk": "위험",
+        "good": 2,
+        "total": 7,
+        "bad_items": [
+          "목굴곡각",
+          "팔꿈치 각도",
+          "손목 각도"
+        ],
+        "time": "2026-04-29 06:55"
+      },
       {
         "score": 6.0,
         "point": 60,
