@@ -15,8 +15,10 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
 # ── 경로 설정 ─────────────────────────────────────────────────────────
 BASE       = os.path.dirname(os.path.abspath(__file__))
-MP_MODEL   = os.path.join(BASE, 'MediaPipe', 'models', 'pose_landmarker.task')
-YOLO_MODEL = os.path.join(BASE, 'YOLO', 'fit_me_up', 'combined_gpu', 'weights', 'best.pt')
+MP_MODEL     = os.path.join(BASE, 'MediaPipe', 'models', 'pose_landmarker_full.task')
+MLP_MODEL    = os.path.join(BASE, 'MediaPipe', 'models', 'posture_mlp_final.keras')
+MLP_SCALER   = os.path.join(BASE, 'MediaPipe', 'models', 'posture_scaler.pkl')
+YOLO_MODEL   = os.path.join(BASE, 'YOLO', 'fit_me_up', 'combined_gpu', 'weights', 'best.pt')
 
 # ── 자세기준서 임계값 ─────────────────────────────────────────────────
 THRESHOLD_CNN   = 0.60
@@ -182,53 +184,111 @@ def step1_mediapipe(image_path):
 # raw_landmarks를 Step 1 결과 대신 재활용
 # =====================================================================
 def step2_mlp_cva_tia(image_path):
-    sys.path.insert(0, os.path.join(BASE, 'MediaPipe', 'code'))
-    from predict import predict_posture
+    """
+    새 predict.py (귀 기준 CVA) 연동
+    - 모델: posture_mlp_final.keras
+    - 스케일러: posture_scaler.pkl
+    - MediaPipe Tasks API로 관절 추출
+    """
+    import joblib, cv2 as _cv2
+    import mediapipe as _mp
+    from mediapipe.tasks import python as _mp_python
+    from mediapipe.tasks.python import vision as _mp_vision
+    import tensorflow as _tf
+    import numpy as _np
 
-    res = predict_posture(image_path)
+    # ── 모델/스케일러 로드 ────────────────────────────────────────────
+    if not os.path.exists(MLP_MODEL) or not os.path.exists(MLP_SCALER):
+        err = {"error": f"MLP 모델/스케일러 없음: {MLP_MODEL}, {MLP_SCALER}"}
+        return err, None, None, None, None
 
-    if res is None or 'error' in res:
-        return res, None, None, None, None
+    try:
+        model  = _tf.keras.models.load_model(MLP_MODEL)
+        scaler = joblib.load(MLP_SCALER)
+    except Exception as e:
+        return {"error": f"모델 로드 실패: {e}"}, None, None, None, None
 
-    # raw_landmarks → integrate.py 형식으로 변환
-    # predict.py: {idx: {'x','y','vis'}}
-    # integrate.py: lm 리스트 (lm[idx].x, lm[idx].y, lm[idx].visibility)
-    raw = res.get('raw_landmarks', {})
+    # ── MediaPipe Tasks API로 관절 추출 ──────────────────────────────
+    if not os.path.exists(MP_MODEL):
+        return {"error": f"MediaPipe 모델 없음: {MP_MODEL}"}, None, None, None, None
+
+    try:
+        base_options = _mp_python.BaseOptions(model_asset_path=MP_MODEL)
+        options      = _mp_vision.PoseLandmarkerOptions(
+            base_options=base_options,
+            running_mode=_mp_vision.RunningMode.IMAGE
+        )
+        detector = _mp_vision.PoseLandmarker.create_from_options(options)
+        mp_image = _mp.Image.create_from_file(image_path)
+        result   = detector.detect(mp_image)
+        detector.close()
+    except Exception as e:
+        return {"error": f"MediaPipe 실패: {e}"}, None, None, None, None
+
+    if not result.pose_landmarks:
+        return {"error": "관절 탐지 실패 — 측면 전신 이미지 권장"}, None, None, None, None
+
+    # Tasks API landmark → lm 리스트 변환
+    raw_lm = result.pose_landmarks[0]
 
     class _LM:
         def __init__(self, x, y, vis):
             self.x, self.y, self.visibility = x, y, vis
 
-    lm = [_LM(raw[i]['x'], raw[i]['y'], raw[i]['vis']) for i in range(33)]
-    h  = res.get('img_h', 1)
-    w  = res.get('img_w', 1)
+    lm = [_LM(raw_lm[i].x, raw_lm[i].y, raw_lm[i].visibility) for i in range(33)]
 
-    cva = res.get('CVA')
-    tia = res.get('TIA')
+    frame = _cv2.imread(image_path)
+    h, w  = frame.shape[:2]
 
-    all_ind = {}
+    # ── 귀 기준 CVA / 어깨-골반 TIA 계산 ─────────────────────────────
+    def vis(idx): return lm[idx].visibility
+    def best(a, b): return a if vis(a) >= vis(b) else b
 
-    # CVA/TIA 판정: MLP label 기준으로만
-    mlp_good = (res.get('label', 'bad') == 'good')
-    cva_ok   = mlp_good
-    tia_ok   = mlp_good
+    ear_idx = best(7, 8)
+    sh_idx  = best(11, 12)
+    hp_idx  = best(23, 24)
 
-    ear_idx_cva = best_idx(lm, 7, 8)    # 귀 (CVA 기준: 자세기준서)
-    sh_idx_cva  = best_idx(lm, 11, 12)
-    sh_idx2, hp_idx = best_pair(lm, 11, 12, 23, 24)
+    ear = (lm[ear_idx].x, lm[ear_idx].y)
+    sh  = (lm[sh_idx].x,  lm[sh_idx].y)
+    hip = (lm[hp_idx].x,  lm[hp_idx].y)
 
-    all_ind['cva'] = {
-        'value':  round(cva, 1) if cva is not None else None,
-        'ok':     cva_ok if cva is not None else None,
-        'joints': (ear_idx_cva, sh_idx_cva)
+    def vertical_angle(p1, p2):
+        dx = p1[0] - p2[0]
+        dy = p1[1] - p2[1]
+        return float(_np.degrees(_np.arctan2(abs(dx), abs(dy))))
+
+    cva = round(vertical_angle(ear, sh), 2)
+    tia = round(vertical_angle(sh, hip), 2)
+
+    # ── MLP 예측 ─────────────────────────────────────────────────────
+    try:
+        features    = _np.array([[cva, tia]])
+        features_sc = scaler.transform(features)
+        prob_good   = float(model.predict(features_sc, verbose=0)[0][0])
+        prob_bad    = 1.0 - prob_good
+        label       = "bad" if prob_bad >= 0.35 else "good"
+        confidence  = round(prob_bad if label == "bad" else prob_good, 4)
+    except Exception as e:
+        return {"error": f"예측 실패: {e}"}, None, None, None, None
+
+    mlp_res = {
+        "label":      label,
+        "confidence": confidence,
+        "CVA":        cva,
+        "TIA":        tia,
     }
-    all_ind['tia'] = {
-        'value':  round(tia, 1) if tia is not None else None,
-        'ok':     tia_ok if tia is not None else None,
-        'joints': (sh_idx2, hp_idx)
+
+    # ── all_ind 구성 ──────────────────────────────────────────────────
+    mlp_good = (label == "good")
+    sh_idx2  = best(11, 12)
+    hp_idx2  = best(23, 24)
+
+    all_ind = {
+        'cva': {'value': cva, 'ok': mlp_good, 'joints': (ear_idx, sh_idx)},
+        'tia': {'value': tia, 'ok': mlp_good, 'joints': (sh_idx2, hp_idx2)},
     }
 
-    return res, all_ind, lm, h, w
+    return mlp_res, all_ind, lm, h, w
 
 
 # =====================================================================

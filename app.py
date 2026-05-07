@@ -879,13 +879,56 @@ def analyze_image(pil_image: Image.Image):
         v   = r.get('value')
         ok  = r.get('ok')
         unit = KEY_MAP[key][1]
-        val_str = f"{v}{unit}" if v is not None else "N/A"
+        val_str = f"{v}{unit}" if v is not None else "인식 불가"
         # is_good: ok=True→True, ok=False→False, ok=None→False(N/A)
         is_good = (ok is True)
         return (val_str, is_good, v)
 
     posture = {KEY_MAP[k][0]: to_tuple(k) for k in POSTURE_KEYS if k in all_ind}
     env     = {KEY_MAP[k][0]: to_tuple(k) for k in ENV_KEYS     if k in all_ind}
+
+    # ── CVA/TIA 사전 품질검사 ────────────────────────────────
+    # integrate.py의 CVA/TIA ok 값만 사용해서 업로드 사진을 통과/재촬영으로 나눕니다.
+    # 둘 다 True일 때만 app.py의 기존 8개 지표 결과 화면을 보여주고,
+    # 하나라도 False 또는 측정불가(None)이면 기존 결과 저장/렌더링을 막습니다.
+    cva_info = all_ind.get('cva', {}) or {}
+    tia_info = all_ind.get('tia', {}) or {}
+    cva_gate_ok = cva_info.get('ok') is True
+    tia_gate_ok = tia_info.get('ok') is True
+    posture_gate_pass = cva_gate_ok and tia_gate_ok
+
+    def _gate_value_text(info, unit='°'):
+        v = info.get('value')
+        return f"{v}{unit}" if v is not None else "측정불가"
+
+    cva_gate_value = _gate_value_text(cva_info)
+    tia_gate_value = _gate_value_text(tia_info)
+
+    cva_gate_status = "GOOD" if cva_gate_ok else "BAD"
+    tia_gate_status = "GOOD" if tia_gate_ok else "BAD"
+
+    if not posture_gate_pass:
+        overlay_rgb = cv2.cvtColor(overlay_bgr, cv2.COLOR_BGR2RGB)
+        bad_gate_items = []
+        if not cva_gate_ok:
+            bad_gate_items.append(f"CVA 목굴곡각: {cva_gate_value} / {cva_gate_status}")
+        if not tia_gate_ok:
+            bad_gate_items.append(f"TIA 몸통굴곡각: {tia_gate_value} / {tia_gate_status}")
+
+        return {
+            "ok": True,
+            "message": "CVA/TIA 자세 품질검사에서 재촬영이 필요합니다.",
+            "gate_pass": False,
+            "gate_reason": "CVA와 TIA가 둘 다 GOOD일 때만 종합 GOOD으로 판정됩니다.",
+            "gate_bad_items": bad_gate_items,
+            "gate_metrics": {
+                "CVA": {"value": cva_gate_value, "status": cva_gate_status},
+                "TIA": {"value": tia_gate_value, "status": tia_gate_status},
+            },
+            "overlay": overlay_rgb,
+            "posture": posture,
+            "env": env,
+        }
 
     # classify_posture_level 적용 (app.py 기준 재분류)
     posture = {
@@ -910,7 +953,7 @@ def analyze_image(pil_image: Image.Image):
     missing_items = [
         {"key": k, "label": FEEDBACK[k]["label"],
          "reason": missing_reason_map.get(k, "기준점 부족으로 평가 제외")}
-        for k, v in all_items.items() if v[0] == "N/A"
+        for k, v in all_items.items() if v[0] == "인식 불가"
     ]
 
     score, risk, level_counts = calculate_clinical_score_from_items(posture, env)
@@ -951,67 +994,94 @@ def render_logo():
     logo_base64 = get_logo_base64("logo.png")
 
     if logo_base64:
-        logo_html = f'<img class="sidebar-logo-img" src="data:image/png;base64,{logo_base64}">'
+        logo_html = (
+            '<div class="sidebar-logo-wrap">'
+            f'<img class="sidebar-logo-img" src="data:image/png;base64,{logo_base64}">'
+            '<div class="sidebar-logo-text">AI 자세 분석 서비스</div>'
+            '</div>'
+        )
     else:
-        logo_html = '<div class="sidebar-logo-fallback">F</div>'
+        logo_html = (
+            '<div class="sidebar-logo-fallback-wrap">'
+            '<div class="sidebar-logo-fallback">F</div>'
+            '<div class="sidebar-logo-text">AI 자세 분석 서비스</div>'
+            '</div>'
+        )
 
     st.sidebar.markdown(
         f"""
 <style>
 [data-testid="stSidebar"] > div:first-child {{
     padding-top: 0 !important;
-    margin-top: 0 !important;
+    margin-top: -54px !important;
+}}
+
+section[data-testid="stSidebar"] .block-container {{
+    padding-top: 0 !important;
 }}
 
 .sidebar-header {{
     width: 100%;
-    padding: 14px 6px 16px 6px;
+    padding: 0 0 10px 0;
     border-bottom: 1px solid #E5EAF2;
-    margin-bottom: 14px;
+    margin-bottom: 6px;
+    text-align: center;
 }}
 
-.sidebar-logo-row {{
+.sidebar-logo-wrap {{
+    position: relative;
     width: 100%;
+    height: 245px;
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     justify-content: center;
-    gap: 8px;
+    overflow: hidden;
 }}
 
 .sidebar-logo-img {{
-    width: 110px;
-    height: 110px;
+    width: 255px;
+    height: 255px;
     object-fit: contain;
-    flex-shrink: 0;
+    display: block;
+}}
+
+.sidebar-logo-text {{
+    position: absolute;
+    left: 50%;
+    top: 74%;
+    transform: translateX(-50%);
+    font-size: 24px;
+    font-weight: 900;
+    color: #172033;
+    white-space: nowrap;
+    letter-spacing: -0.7px;
+    text-align: center;
+    text-shadow: 0 2px 7px rgba(255,255,255,0.98);
+}}
+
+.sidebar-logo-fallback-wrap {{
+    display: flex;
+    flex-direction: column;
+    align-items: center;
 }}
 
 .sidebar-logo-fallback {{
-    width: 46px;
-    height: 46px;
-    border-radius: 12px;
+    width: 120px;
+    height: 120px;
+    border-radius: 28px;
     background: #185FA5;
     color: white;
     display: flex;
     align-items: center;
     justify-content: center;
+    font-size: 46px;
     font-weight: 900;
-}}
-
-.sidebar-logo-text {{
-    font-size: 14px;
-    font-weight: 900;
-    color: #172033;
-    line-height: 1.2;
-    white-space: nowrap;
-    letter-spacing: -0.6px;
+    margin-bottom: 6px;
 }}
 </style>
 
 <div class="sidebar-header">
-    <div class="sidebar-logo-row">
-        {logo_html}
-        <div class="sidebar-logo-text">AI 자세 분석 서비스</div>
-    </div>
+    {logo_html}
 </div>
 """,
         unsafe_allow_html=True,
@@ -2354,6 +2424,85 @@ def render_measure():
 
         if not result["ok"]:
             st.error(result["message"])
+            return
+
+        if not result.get("gate_pass", True):
+            st.session_state.latest_result = None
+            gate_metrics = result.get("gate_metrics", {})
+            cva = gate_metrics.get("CVA", {})
+            tia = gate_metrics.get("TIA", {})
+
+            def _status_color(status):
+                return "#3B8C42" if status == "GOOD" else "#D94A4A"
+
+            # ── 레이아웃: 오버레이 이미지 | 판정 카드 ────────────────
+            img_col, info_col = st.columns([1, 1])
+
+            with img_col:
+                overlay_img = result.get("overlay")
+                if overlay_img is not None:
+                    st.markdown(
+                        """
+<div style="border-radius:16px;overflow:hidden;box-shadow:0 4px 20px rgba(0,0,0,0.12);">
+""", unsafe_allow_html=True)
+                    st.image(overlay_img, use_container_width=True,
+                             caption="현재 자세(빨강) vs 목표 자세(민트)")
+                    st.markdown("</div>", unsafe_allow_html=True)
+
+            with info_col:
+                st.markdown(
+                    f"""
+<div class="fit-card" style="border-left:6px solid #D94A4A;
+     background:linear-gradient(135deg,#FFF1F1,#FFFFFF);height:100%;">
+    <div class="fit-card-title">
+        <span>자세 교정이 필요합니다</span>
+        <span class="fit-badge badge-red">BAD</span>
+    </div>
+    <div style="font-size:14px;line-height:1.8;color:#172033;
+         font-weight:700;margin-bottom:10px;">
+        CVA 또는 TIA가 BAD 판정으로<br>
+        환경 분석 결과를 제공하지 않습니다.
+    </div>
+    <div style="font-size:12.5px;line-height:1.8;color:#667085;margin-bottom:16px;">
+        이미지의 <b style="color:#D94A4A;">빨간 선</b>이 현재 자세,
+        <b style="color:#2ec4b6;">민트 선</b>이 목표 자세입니다.<br>
+        목표 자세에 맞게 교정 후 다시 촬영해주세요.
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px;">
+        <div style="padding:14px;border-radius:14px;background:#FFFFFF;
+             border:2px solid {_status_color(cva.get('status','BAD'))};text-align:center;">
+            <div style="font-size:11px;color:#667085;margin-bottom:4px;">CVA 목굴곡각</div>
+            <div style="font-size:26px;font-weight:900;color:#172033;">
+                {cva.get('value', '측정불가')}
+            </div>
+            <div style="font-size:13px;font-weight:900;
+                 color:{_status_color(cva.get('status','BAD'))};">
+                {cva.get('status', 'BAD')} · 정상 0°~20°
+            </div>
+        </div>
+        <div style="padding:14px;border-radius:14px;background:#FFFFFF;
+             border:2px solid {_status_color(tia.get('status','BAD'))};text-align:center;">
+            <div style="font-size:11px;color:#667085;margin-bottom:4px;">TIA 몸통굴곡각</div>
+            <div style="font-size:26px;font-weight:900;color:#172033;">
+                {tia.get('value', '측정불가')}
+            </div>
+            <div style="font-size:13px;font-weight:900;
+                 color:{_status_color(tia.get('status','BAD'))};">
+                {tia.get('status', 'BAD')} · 정상 0°~10°
+            </div>
+        </div>
+    </div>
+    <div style="padding:12px;border-radius:10px;background:#FFF8E1;
+         border-left:4px solid #F59E0B;font-size:12.5px;color:#92400E;line-height:1.7;">
+        💡 측면에서 <b>코·어깨·골반</b>이 잘 보이도록 촬영하면<br>
+        더 정확한 분석이 가능합니다.
+    </div>
+</div>
+""",
+                    unsafe_allow_html=True,
+                )
+
+            st.warning("자세를 교정하고 다시 촬영해주세요.")
             return
 
         st.session_state.latest_result = result
@@ -3740,7 +3889,7 @@ def render_report():
 
     def _fmt_value(key, value, raw):
         if raw is None:
-            return "N/A"
+            return "인식 불가"
         if key in ["책상높이"]:
             return f"{float(raw):.3f}"
         if key in ["등받이"]:
