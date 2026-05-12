@@ -1,0 +1,22 @@
+# --- 핵심 프레임워크 ---
+streamlit
+streamlit-autorefresh
+
+# --- AI & 컴퓨터 비전 ---
+ultralytics
+mediapipe
+tensorflow
+opencv-python
+
+# --- PyTorch (공식 서버 주소 사용) ---
+# [주의] 이 설정은 Windows + NVIDIA GPU 환경에 최적화되어 있습니다.
+--index-url https://download.pytorch.org/whl/cu121
+torch
+torchvision
+torchaudio
+
+# --- 기타 유틸리티 ---
+pillow
+split-folders
+joblib
+scikit-learn

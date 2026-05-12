@@ -1,5 +1,5 @@
 # =====================================================================
-# .gitignore | Fit_me_up 프로젝트
+# .gitignore | Fit_me_up 프로젝트 (모델 포함 버전)
 # =====================================================================
 
 # ── 가상환경 ──────────────────────────────────────────────────────────
@@ -7,54 +7,34 @@
 venv/
 env/
 
-# ── 모델 파일 (용량 큼) ───────────────────────────────────────────────
-# MediaPipe
-MediaPipe/models/pose_landmarker.task
-MediaPipe/models/posture_mobilenetv2_finetuned.h5
-MediaPipe/models/posture_mlp_final.pkl
-
-# YOLO
+# ── 모델 파일 관리 ────────────────────────────────────────────────────
+# 기본적으로 모든 모델 가중치는 제외
 *.pt
-YOLO/fit_me_up/
+*.h5
+*.pkl
+*.task
 
-# ── 데이터셋 (용량 큼) ────────────────────────────────────────────────
-YOLO/YOLO_full_body_Labeling/images/
-YOLO/YOLO_full_body_Labeling/labels/
-YOLO/YOLO_full_body_Labeling/split_data/
-YOLO/YOLO_ankle_visible_Labeling/images/
-YOLO/YOLO_ankle_visible_Labeling/labels/
-YOLO/YOLO_ankle_visible_Labeling/split_data/
+# [중요] 팀원 공유를 위해 최종 YOLO 모델만 예외적으로 허용
+!YOLO/fit_me_up/combined_gpu/weights/best.pt
+
+# ── 학습 결과 및 데이터셋 (용량 문제로 제외) ──────────────────────────
+YOLO/fit_me_up/*/
+!YOLO/fit_me_up/combined_gpu/weights/best.pt
+YOLO/**/images/
+YOLO/**/labels/
+YOLO/**/split_data/
 MediaPipe/data/labeled_dataset_v3.csv
-
-# ── 학습 결과 / 로그 ──────────────────────────────────────────────────
 MediaPipe/reports/
 runs/
 *.log
 
-# ── Python 캐시 ───────────────────────────────────────────────────────
-__pycache__/
+# ── Python 캐시 및 OS ─────────────────────────────────────────────────
+**/__pycache__/
 *.py[cod]
-*.pyo
-.pytest_cache/
-
-# ── Jupyter ───────────────────────────────────────────────────────────
-.ipynb_checkpoints/
-*.ipynb
-
-# ── OS ────────────────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
 desktop.ini
 
-# ── IDE ───────────────────────────────────────────────────────────────
+# ── IDE 설정 ──────────────────────────────────────────────────────────
 .vscode/
 .idea/
-*.suo
-*.user
-
-# ── 기타 ──────────────────────────────────────────────────────────────
-*.tmp
-*.bak
-dist/
-build/
-*.egg-info/
